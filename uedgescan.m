@@ -203,7 +203,7 @@ classdef uedgescan < handle
             job_file_fail = fullfile(work_dir, 'fail', job_file_fail);
             tic
             if ~exist(job(1).file_init, 'file') && ~exist(job_file_fail, 'file')
-                disp(['[' num2str(job.id) ']>>>>> Waiting init file (' num2str(toc) ' s): ' job(1).file_init])
+                disp(['[' num2str(job(1).id) ']>>>>> Waiting init file (' num2str(toc) ' s): ' job(1).file_init])
                 pause(0.1)
                 return
             end
@@ -271,6 +271,7 @@ classdef uedgescan < handle
             Args.ScriptInput = self.script_input;
             Args.WorkDir = self.work_dir;
             Args.JobID = [];
+            Args = parseArgs(varargin, Args);
             
             uedgerun.input_diff_check(input_diff);
             
