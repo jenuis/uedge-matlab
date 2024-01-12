@@ -392,8 +392,22 @@ classdef uedgescan < handle
             end
         end
         
-        function job_files = job_get_files(self)
+        function job_files = job_get_files(self, no_running)
+            %% get all jobs
             job_files = dir(fullfile(self.work_dir, [self.job_file_prefix, '*.mat']));
+            if nargin < 2 || ~no_running
+                return
+            end
+            %% remove running jobs
+            inds_running = [];
+            for i=1:length(job_files)
+                fpath = abspath(job_files(i));
+                lock_file = strrep(fpath, '.mat', '.mat.lock');
+                if exist(lock_file, 'file')
+                    inds_running = i;
+                end
+            end
+            job_files(inds_running) = [];
         end
         
         function job_update(self)
@@ -496,7 +510,7 @@ classdef uedgescan < handle
             %% normal run
             if ~use_parallel
                 while(1)
-                    job_files = self.job_get_files();
+                    job_files = self.job_get_files(1);
                     if isempty(job_files)
                         disp('>>>>> Exit with no jobs!')
                         break
@@ -510,7 +524,7 @@ classdef uedgescan < handle
             end
             %% parallel run
             while(1)
-                job_files = self.job_get_files();
+                job_files = self.job_get_files(1);
                 if isempty(job_files)
                     disp('>>>>> Exit with no jobs!')
                     break
