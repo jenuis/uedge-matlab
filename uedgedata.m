@@ -187,7 +187,7 @@ classdef uedgedata < handle
             
             is_loaded = false;
             if ~exist(mesh_file, 'file')
-                warning('Can not find mesh file, try run "mesh_save" to generate!')
+                warning('Can not find mesh file, try call "uedgedata.mesh_save()" to generate!')
                 self.file_mesh = [];
                 return
             end

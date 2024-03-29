@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
-% Version: V 0.1.11
+% Version: V 0.1.12
 % TODO: make '>>>>> ' a constant across the project
 classdef uedgescan < handle    
     properties
@@ -147,23 +147,6 @@ classdef uedgescan < handle
             disp([disp_prefix 'Converged status: ' upper(run_status)])
         end
         
-        function time_stat(work_dir)
-            ur = uedgerun();
-            file_list = dir(fullfile(work_dir, [ur.file_save_prefix '*.mat']));
-            time = zeros(length(file_list));
-            for i=1:length(file_list)
-                f = file_list(i);
-                job_file = abspath(f);
-                mf = matfile(job_file);
-                job = mf.job;
-                time(i) = job.elapsed_time;
-            end
-            uedgedata.figure;
-            histogram(time/60);
-            xlabel('Elapsed Time [minutes]')
-            ylabel('Counts')
-            uedgedata.figure_decoration;
-        end
     end
     methods(Access=private, Static)
         function status = run_lock(lock_file, mode)
@@ -438,29 +421,6 @@ classdef uedgescan < handle
             end
         end
         
-        function job_disp(self, status_filter)
-            if nargin < 2
-                status_filter = {'successful', 'failed', 'pending'};
-            end
-            
-            job_files = self.job_get_files();
-            for i=1:length(job_files)
-                f = job_files(i);
-                fpath = abspath(f);
-                mf = matfile(fpath);
-                disp(['***** ' f.name ' *****'])
-                job = mf.job;
-                for j=1:length(job)
-                    str_save = uedgerun.input_diff_gen_str(job(j).input_diff);
-                    [~, profile_init] = fileparts(job(j).file_init);
-                    status = self.job_status(job(j).input_diff);
-                    if ~isempty(status_filter) && any(contains(lower(status_filter), lower(status(1:4))))
-                        disp(['"' str_save '" <-- "' profile_init '", "' upper(status) '"'])
-                    end                    
-                end
-            end
-        end
-        
         function file_profiles = profile_files_get(self, status, varargin)
             Args.FileExtension = '.mat';
             Args = parseArgs(varargin, Args);
@@ -478,20 +438,7 @@ classdef uedgescan < handle
                     error(['Unknown status: "' status '"'])
             end
         end
-        
-        function job_remain(self, varargin)
-            job_list_all = self.scan_traverse(self.scan);
-            len_all = length(job_list_all);
-            disp(['>>>>> All cases: ' num2str(len_all)])
-            job_list_succeeded = self.profile_files_get('succeeded', 'fileextension', '.hdf5');
-            len_succeeded = length(job_list_succeeded);
-            disp(['>>>>> Succeded cases: ' num2str(len_succeeded)])
-            job_list_failed = self.profile_files_get('failed', 'fileextension', '.mat');
-            len_failed = length(job_list_failed);
-            disp(['>>>>> Failed cases: ' num2str(len_failed)])
-            disp(['>>>>> Remain cases: ' num2str(len_all - len_succeeded - len_failed)])
-        end
-                
+           
         function run(self, varargin)
             %% check arguments
             Args.PrintPrefix = '>>>>> ';
@@ -536,14 +483,77 @@ classdef uedgescan < handle
             end
         end
         
+        function disp(self, status_filter)
+            if nargin < 2
+                status_filter = {'successful', 'failed', 'pending'};
+            end
+            
+            job_files = self.job_get_files();
+            for i=1:length(job_files)
+                f = job_files(i);
+                fpath = abspath(f);
+                mf = matfile(fpath);
+                disp(['***** ' f.name ' *****'])
+                job = mf.job;
+                for j=1:length(job)
+                    str_save = uedgerun.input_diff_gen_str(job(j).input_diff);
+                    [~, profile_init] = fileparts(job(j).file_init);
+                    status = self.job_status(job(j).input_diff);
+                    if ~isempty(status_filter) && any(contains(lower(status_filter), lower(status(1:4))))
+                        disp(['"' str_save '" <-- "' profile_init '", "' upper(status) '"'])
+                    end                    
+                end
+            end
+        end
+        
+        function remain(self, varargin)
+            job_list_all = self.scan_traverse(self.scan);
+            len_all = length(job_list_all);
+            disp(['>>>>> All cases: ' num2str(len_all)])
+            job_list_succeeded = self.profile_files_get('succeeded', 'fileextension', '.hdf5');
+            len_succeeded = length(job_list_succeeded);
+            disp(['>>>>> Succeded cases: ' num2str(len_succeeded)])
+            job_list_failed = self.profile_files_get('failed', 'fileextension', '.mat');
+            len_failed = length(job_list_failed);
+            disp(['>>>>> Failed cases: ' num2str(len_failed)])
+            disp(['>>>>> Remain cases: ' num2str(len_all - len_succeeded - len_failed)])
+        end
+             
         function clean(self)
+            %% clean run and input files
             uedgerun.clean()
+            %% clean not deleted job files
+            self.job_update()
+            %% clean lock files
+            answer = input('Sure to clean job lock files? Please ensure there is no running task! [yes/no]', 's');
+            if ~contains(lower(answer), 'y')
+                return
+            end
+            
             lock_files = dir(fullfile(self.work_dir, 'job*.lock'));
             for i=1:length(lock_files)
                 lock_file = abspath(lock_files(i));
                 disp(['Remove: "' lock_file '"'])
                 delete(lock_file)
             end
+        end
+        
+        function time_stat(self)
+            ur = uedgerun();
+            file_list = dir(fullfile(self.work_dir, [ur.file_save_prefix '*.mat']));
+            time = zeros(length(file_list));
+            for i=1:length(file_list)
+                f = file_list(i);
+                job_file = abspath(f);
+                mf = matfile(job_file);
+                job = mf.job;
+                time(i) = job.elapsed_time;
+            end
+            uedgedata.figure;
+            histogram(time/60);
+            xlabel('Elapsed Time [minutes]')
+            ylabel('Counts')
+            uedgedata.figure_decoration;
         end
     end
 end
