@@ -7,8 +7,6 @@ classdef uedgestat < handle
         folder
         file_pattern
         files
-        
-        file_extension = '.hdf5'
     end
 
     properties
@@ -121,7 +119,7 @@ classdef uedgestat < handle
         
         function job_file = get_job_file(self, file_index)
             file_path = self.get_profile_path(file_index);
-            job_file = strrep(file_path, self.file_extension, '.mat');
+            job_file = strrep(file_path, uedgerun.file_extension, '.mat');
         end
         
         function para = scan_parse_file(self, profile_file_name, varargin)
@@ -131,7 +129,7 @@ classdef uedgestat < handle
             if nargin > 1
                 para = struct();
                 %% parse scan para using job record
-                job_file = strrep(profile_file_name, self.file_extension, '.mat');
+                job_file = strrep(profile_file_name, uedgerun.file_extension, '.mat');
                 job_file = fullfile(self.folder, job_file);
                 if exist(job_file, 'file')
                     mf = matfile(job_file);

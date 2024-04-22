@@ -137,7 +137,7 @@ classdef uedgescan < handle
             end
             
             if job.status == 0
-                job_file = strrep(ur.file_save, ur.file_extenstion, '.mat');
+                job_file = strrep(ur.file_save, ur.file_extension, '.mat');
                 run_status = 'successful';
             else
                 job_file = job_file_fail;

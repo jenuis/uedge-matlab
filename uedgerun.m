@@ -8,6 +8,13 @@ classdef uedgerun < handle
         script_input_diff % temp, script will be deleted after calling self.run
     end
     
+    properties(Constant)
+        file_save_prefix = 'savedt';
+        file_image_prefix = 'images';
+        file_mesh_prefix = 'mesh';
+        file_extension = '.hdf5';
+    end
+    
     properties
         script_input
         script_image
@@ -17,10 +24,6 @@ classdef uedgerun < handle
         
         file_init
         file_save
-        
-        file_save_prefix = 'savedt';
-        file_image_prefix = 'images';
-        file_extenstion = '.hdf5';
     end
     
     methods(Static)
@@ -388,7 +391,7 @@ classdef uedgerun < handle
                 'casedir, _ = os.path.split(profile_save)', ...
                 ''};
             if ~isempty(image_script)
-                contents{end+1} = ['image_save = os.path.join(casedir, "' self.file_image_prefix self.file_extenstion '")'];
+                contents{end+1} = ['image_save = os.path.join(casedir, "' self.file_image_prefix self.file_extension '")'];
                 contents{end+1} = ['if "' self.file_save_prefix '" in profile_save:'];
                 contents{end+1} = ['    image_save = profile_save.replace("' self.file_save_prefix '", "' self.file_image_prefix '")'];
                 contents{end+1} = ['print("' disp_prefix 'Exec: " + image_script)'];

@@ -154,11 +154,13 @@ classdef uedgedata < handle
             end
                         
             self.check_dependency();
-            assert(exist(file_profile,'file'), 'Input file does not exist!')
-            assert(self.is_uedge_file(file_profile), 'Input file is not an UEDGE file!')
+            assert(exist(file_profile,'file'), 'Input profile does not exist!')
+            assert(self.is_uedge_file(file_profile), 'Input profile is not an UEDGE file!')
             self.file_profile = file_profile;
+            
             self.ur = uedgerun();
-            self.file_job = uedgerun.check_existence(strrep(self.file_profile, self.ur.file_extenstion, '.mat'));  
+            self.file_mesh = fullfile(fileparts(file_profile), [self.ur.file_mesh_prefix, self.ur.file_extension]);
+            self.file_job = uedgerun.check_existence(strrep(self.file_profile, self.ur.file_extension, '.mat'));  
             %% set mesh variables using profile
             self.nx = double(self.profile_read('com.nx'));
             self.ny = double(self.profile_read('com.ny'));
@@ -242,12 +244,7 @@ classdef uedgedata < handle
                 flag = true;
                 return
             end
-            %% check according to self.file_profile
-%             f_image = strrep(strrep(self.file_profile, '_successful', ''), 'savedt', 'images');
-%             if strcmpi(self.file_profile, f_image)
-%                 return
-%             end
-            
+            %% check according to self.file_profile            
             f_image = strrep(self.file_profile, self.ur.file_save_prefix, self.ur.file_image_prefix);
             if strcmpi(self.file_profile, f_image)
                 return
