@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-10-11
-% Version: V 0.1.6
+% Version: V 0.1.7
 classdef uedgedata < handle
     properties(Access=private)
         depdencies = {...
@@ -20,8 +20,6 @@ classdef uedgedata < handle
         
         grid_no_poloidal
         grid_no_radial
-        
-        ur % a uedgerun instance
     end
     
     properties
@@ -29,6 +27,7 @@ classdef uedgedata < handle
         file_image
         file_mesh = 'mesh.hdf5'
         file_job
+        ur % a uedgerun instance
         
         nx
         ny
@@ -152,15 +151,20 @@ classdef uedgedata < handle
             if nargin == 0
                 return
             end
-                        
+            % check profile            
             self.check_dependency();
             assert(exist(file_profile,'file'), 'Input profile does not exist!')
             assert(self.is_uedge_file(file_profile), 'Input profile is not an UEDGE file!')
             self.file_profile = file_profile;
-            
-            self.ur = uedgerun();
-            self.file_mesh = fullfile(fileparts(file_profile), [self.ur.file_mesh_prefix, self.ur.file_extension]);
-            self.file_job = uedgerun.check_existence(strrep(self.file_profile, self.ur.file_extension, '.mat'));  
+            % set uedgerun instance
+            folder = fileparts(file_profile);
+            self.ur = uedgerun(...
+                {fullfile(folder, 'rd_in_new.py'), fullfile(folder, 'rd_in.py')}, ...
+                file_profile ...
+                );
+            % set other propeties
+            self.file_mesh = fullfile(folder, [self.ur.file_mesh_prefix, self.ur.file_extension]);
+            self.file_job = self.ur.check_existence(strrep(self.file_profile, self.ur.file_extension, '.mat'));  
             %% set mesh variables using profile
             self.nx = double(self.profile_read('com.nx'));
             self.ny = double(self.profile_read('com.ny'));
@@ -190,7 +194,7 @@ classdef uedgedata < handle
             is_loaded = false;
             if ~exist(mesh_file, 'file')
                 warning('Can not find mesh file, try call "uedgedata.mesh_save()" to generate!')
-                self.file_mesh = [];
+%                 self.file_mesh = []; % keep to call mesh_save()
                 return
             end
             %% load
@@ -209,12 +213,9 @@ classdef uedgedata < handle
             is_loaded= true;
         end
         
-        function mesh_save(self, varargin)
-            %% check arguments
-            Args.InputScript = {'rd_in_new.py', 'rd_in.py'};
-            Args = parseArgs(varargin, Args);
-            %% set uedgerun and gen image script
-            self.ur = uedgerun(Args.InputScript, self.file_profile);
+        function mesh_save(self)
+            %% gen image script
+            script_image_old = self.ur.script_image;
             self.ur.script_image = self.ur.script_name_gen('prefix', 'uedgeimage');
             contents = {
                 'var_list = [', ...
@@ -227,14 +228,17 @@ classdef uedgedata < handle
                 '"com.psinormc", # norm spi ', ...
                 ']', ...
                 '', ...
-                'hdf5_save("mesh.hdf5", var_list)'};
+                ['hdf5_save("' self.file_mesh '", var_list)']};
             contents = strjoin(contents, '\n');
             self.ur.script_save(self.ur.script_image, contents);
             %% run
             self.ur.file_save = self.file_profile;
             self.ur.script_run_gen();
             self.ur.run();
+            %% clean
             delete(self.ur.script_image);
+            self.ur.script_image = script_image_old;
+            self.ur.file_save = [];
         end
 
         function flag = image_check(self)
@@ -714,7 +718,7 @@ classdef uedgedata < handle
             phy = self.read_physical(phy_name);
             
             fit_data.xdata = self.cal_rrsep('OMP');
-            fit_data.ydata = phy.data;
+            fit_data.ydata = abs(phy.data);
             fit_data.xtype = 'rrsep';
             fit_data.ytype = phy_name;
             
@@ -834,18 +838,11 @@ classdef uedgedata < handle
             ylabel([phy.name ' [' phy.unit ']'])
         end
         
-        function ur = rerun(self, varargin)
-            %% check arguments
-            Args.ImageScript = {'image_save_new.py', 'image_save.py'};
-            Args.InputScript = {'rd_in_new.py', 'rd_in.py'};
-            Args = parseArgs(varargin, Args);
-            
-            ur = uedgerun(Args.InputScript, self.file_profile, ...
-                'ImageScript', Args.ImageScript);
+        function rerun(self)
             %% gen script and run
-            ur.file_save = self.file_profile;
-            ur.script_run_gen();
-            status = ur.run();
+            self.ur.file_save = self.file_profile;
+            self.ur.script_run_gen();
+            status = self.ur.run();
             assert(status == 0, ['Returned Error for "' self.file_profile '", see above!'])
             %% rename
             case_dir = fileparts(self.file_profile);
@@ -856,6 +853,8 @@ classdef uedgedata < handle
             elseif ~strcmpi(file_image_new, self.file_image)
                 movefile(file_image_new, self.file_image)
             end
+            %% clean
+            self.ur.file_save = [];
         end
         
     end

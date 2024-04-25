@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
-% Version: V 0.1.4
+% Version: V 0.1.5
 classdef uedgerun < handle
     properties(Access=private)
         script_run % temp, script will be deleted after calling self.run
@@ -19,6 +19,7 @@ classdef uedgerun < handle
         script_input
         script_image
         script_rundt
+        script_runinit
         
         input_diff = struct();
         
@@ -256,8 +257,9 @@ classdef uedgerun < handle
                 return
             end
             
-            Args.ImageScript = '';
-            Args.RundtScript = 'rdcontdt.py';
+            Args.ImageScript = {'image_save_new.py', 'image_save.py', '../image_save_new.py', '../image_save.py'};
+            Args.RundtScript = {'rdcontdt.py', '../rdcontdt.py'};
+            Args.RuninitScript = {'rdinitdt.py', '../rdinitdt.py'};
             
             Args = parseArgs(varargin, Args);
             %% set properties
@@ -265,6 +267,7 @@ classdef uedgerun < handle
             self.file_init = self.check_existence(file_init, 1);
             self.script_image = self.check_existence(Args.ImageScript);
             self.script_rundt = self.check_existence(Args.RundtScript, 1);
+            self.script_runinit = self.check_existence(Args.RuninitScript, 1);
         end
         
         function args = input_diff_update(self, scan_name, scan_value, uedgevar_names, uedgevar_amplifications)
@@ -363,6 +366,7 @@ classdef uedgerun < handle
             rd_in_script = self.script_input_diff_gen();
             image_script = self.script_image;
             rundt_script = self.check_existence(self.script_rundt, 1);
+            runinit_script = self.check_existence(self.script_runinit, 1);
             %% gen run script content
             contents = {
                 'import os', ...
@@ -372,6 +376,7 @@ classdef uedgerun < handle
                 ['rd_in_script = "' rd_in_script '"'], ...
                 ['image_script = "' image_script '"'], ...
                 ['rundt_script = "' rundt_script '"'], ...
+                ['runinit_script = "' runinit_script '"'], ...
                 '', ...
                 'exec(open(rd_in_script).read())', ...
                 ['assert os.path.exists(profile_init), "' disp_prefix 'Init file not found: " + profile_init'], ...
@@ -385,6 +390,7 @@ classdef uedgerun < handle
                 ['assert bbb.iterm == 1, "' disp_prefix 'bbb.iterm != 1"'], ...
                 '', ...
                 ['print("' disp_prefix 'Exec: " + rundt_script)'],...
+                'exec(open(runinit_script).read())', ...
                 'exec(open(rundt_script).read())', ...
                 ['print("' disp_prefix 'Saving profile ...")'],...
                 'hdf5_save(profile_save)', ...
