@@ -387,7 +387,7 @@ classdef uedgescan < handle
                 fpath = abspath(job_files(i));
                 lock_file = strrep(fpath, '.mat', '.mat.lock');
                 if exist(lock_file, 'file')
-                    inds_running = i;
+                    inds_running(end+1) = i;
                 end
             end
             job_files(inds_running) = [];
@@ -447,13 +447,23 @@ classdef uedgescan < handle
             Args.SaveJob = true;
             Args.FailDirName = 'fail';
             Args.UseParallel = true;
+            Args.NumWorkers = maxNumCompThreads;
+            Args.LogFileName = 'uedgescan_log.txt';
             Args = parseArgs(varargin, Args, {'SaveJob', 'SkipExist', 'UseParallel'});
             
             use_parallel = Args.UseParallel;
             dir_work = self.work_dir;
+            num_workers = Args.NumWorkers;
+            log_file_name = Args.LogFileName;
             
             Args = rmfield(Args, 'UseParallel');
+            Args = rmfield(Args, 'NumWorkers');
+            Args = rmfield(Args, 'LogFileName');
             varargin = struct2vararg(Args);
+            %% open diary
+            diary_file = uedgerun.get_increment_file_name(log_file_name);
+            diary(diary_file)
+            diary on
             %% normal run
             if ~use_parallel
                 while(1)
@@ -470,17 +480,63 @@ classdef uedgescan < handle
                 return
             end
             %% parallel run
+            %TODO: use onCleanup to detect use quit
+            % uedge instance not closed by cancel(tasks)
+            
+            %% create parpool
+            if isempty(gcp('nocreate'))
+                disp('>>>>> Creating parallel pool ...')
+                try
+                    pool = parpool(num_workers);
+                catch
+                    pool = parpool();
+                end
+            else
+                disp('>>>>> Use existing parallel pool!')
+                pool = gcp;
+            end
             while(1)
+                %% check if jobs are done
                 job_files = self.job_get_files(1);
                 if isempty(job_files)
                     disp('>>>>> Exit with no jobs!')
                     break
                 end
+                %% create tasks
+                task_no = length(job_files);
+                disp(['>>>>> Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
                 
-                parfor index=1:length(job_files)
-                    uedgescan.run_job_files(dir_work, job_files, index, varargin{:})
+                tasks = parallel.FevalFuture.empty(0, task_no);
+                for index = 1:task_no
+                    tasks(index) = parfeval(pool, ...
+                        @self.run_job_files, ... % function name
+                        0, ... % num of output parameters
+                        dir_work, job_files, index, varargin{:}); % fun arguments
+                end
+                %% examine diary
+                diary_lens = zeros(1, task_no);
+                while(~all(strcmpi({tasks.State}, 'finished')))
+                    for i=1:task_no
+                        diary_len_tmp = length(tasks(i).Diary);
+                        diary_new = tasks(i).Diary(diary_lens(i)+1:diary_len_tmp);
+                        if ~isempty(diary_new)
+                            diary_lens(i) = diary_len_tmp;
+                            disp(diary_new)
+                        end
+                    end
+                    pause(0.1)
+                end
+
+                for i=1:task_no
+                    diary_new = tasks(i).Diary(diary_lens(i)+1:end);
+                    if ~isempty(diary_new)
+                        disp(diary_new)
+                    end
                 end
             end
+            %% clean
+            delete(pool)
+            diary off
         end
         
         function disp(self, status_filter)

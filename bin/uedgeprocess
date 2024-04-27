@@ -1,2 +1,23 @@
-ps -efH | grep $USER | grep uedgerun_
+#!/bin/bash
 
+# Get current user and list all processes
+if [ -z "$1" ]; then
+    ps -efH | grep "$(whoami)" | grep "uedgerun_"
+elif [ "$1" == "kill" ]; then
+    # Display all processes
+    ps -efH | grep "$(whoami)" | grep "uedgerun_"
+    
+    # Prompt user to confirm killing the processes
+    read -p "Do you want to kill these processes? (y/N): " choice
+    
+    # Check user's choice
+    if [[ $choice == "y" || $choice == "Y" || $choice == "yes" || $choice == "YES" ]]; then
+        # Kill the processes
+        ps -efH | grep "$(whoami)" | grep "uedgerun_" | awk '{print $2}' | xargs kill -9
+        echo "Processes killed."
+    else
+        echo "No processes were killed."
+    fi
+else
+    echo "Invalid command. Usage: ./proc [kill]"
+fi

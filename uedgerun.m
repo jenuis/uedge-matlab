@@ -247,6 +247,31 @@ classdef uedgerun < handle
                 end
             end
         end
+        
+        function new_file_name = get_increment_file_name(file_name)
+            %% Check if the input file name exists
+            if exist(file_name, 'file') == 0
+                new_file_name = file_name;  % Input file name doesn't exist, return it as is
+                return
+            end
+            %% Extract file_name
+            [path, name, ext] = fileparts(file_name);
+            %% Increment the file name
+            files = dir([name '*' ext]);
+            counter = 0;
+            for i=1:length(files)
+                [~,tmp_name] = fileparts(files(i).name);
+                tmp_splits = strsplit(tmp_name, name);
+                tmp_counter = str2double((tmp_splits{end}));
+
+                if tmp_counter > counter
+                    counter = tmp_counter;
+                    continue
+                end
+            end
+
+            new_file_name = fullfile(path, [name num2str(counter+1) ext]);
+        end
     end
     methods
         function self = uedgerun(input_script, file_init, varargin)
