@@ -212,6 +212,7 @@ classdef uedgerun < handle
                 arg_name_org = strsplit(line, '=');
                 arg_name_org = arg_name_org{1};
                 %% compare and modify input
+                %TODO: find a method to judge if all modified
                 for i=1:(vararg_len/2)
                     arg_name = varargin{2*i-1};
                     arg_val = varargin{2*i};
@@ -408,6 +409,18 @@ classdef uedgerun < handle
             image_script = self.script_image;
             rundt_script = self.check_existence(self.script_rundt, 1);
             runinit_script = self.check_existence(self.script_runinit, 1);
+            %% modify print prefix in input script
+            contents = {};
+            fh = fopen(rd_in_script, 'r');
+            while(~feof(fh))
+                line = fgetl(fh);
+                if contains(line, uedgerun.print_prefix)
+                    line = strrep(line, uedgerun.print_prefix, strtrim(disp_prefix));
+                end
+                contents{end+1} = line;
+            end
+            fclose(fh);
+            self.script_save(rd_in_script, strjoin(contents, '\n'));
             %% gen run script content
             contents = {
                 'import os', ...

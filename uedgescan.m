@@ -146,6 +146,8 @@ classdef uedgescan < handle
         end
         
         function logfile_new = log_trim(logfile)
+            %% check arguments
+            assert(exist(logfile, 'file'), 'File not exist!')
             %% check logfile_new
             [path, name, ext] = fileparts(logfile);
             logfile_new = fullfile(path, [name '_trim' ext]);
@@ -610,9 +612,8 @@ classdef uedgescan < handle
                 %% create tasks     
                 if task_no > 0                    
                     flag_create = false;
-                    index_list = 1:task_no;
-                    
                     if strcmpi(state, 'init')
+                        index_task = 0;
                         tasks = parallel.FevalFuture.empty(0, task_no);
                         flag_create = true;
                         disp([disp_prefix 'Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
@@ -622,37 +623,55 @@ classdef uedgescan < handle
                             strcmpi({tasks.State}, 'pending') | ...
                             strcmpi({tasks.State}, 'queued') ...
                             ) < num_workers
-                        index_list = index_list + length(tasks);
+                        index_task = length(tasks);
                         flag_create = true;
                         disp([disp_prefix 'Adding parallel tasks (NO. is ' num2str(task_no) ') ...'])
                     end
                     
                     if flag_create
-                        for i = index_list
+                        for i = 1:task_no
                             % create task
                             job_file = job_files(i);
-                            tasks(i) = parfeval(pool, ...
+                            tasks(i+index_task) = parfeval(pool, ...
                                 @self.run_job_file, ... % function name
                                 1, ... % num of output parameters
                                 job_file, varargin{:}); % fun arguments
-                            % open log file
-                            [~, job_file_name] = fileparts(job_file.name);
-                            pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
-                            pause(0.5) % make sure the log file is created
-                            job_diary = uedgerun.get_latest_file(pattern);
-                            disp([disp_prefix 'Opening diary: ' job_diary])
-                            logfile_handles(i) = fopen(job_diary, 'r');
-                            if logfile_handles(i) < 0
-                                disp([disp_prefix 'Failed to open diary: ' job_diary])
-                            end
+                            % init log file handle
+                            logfile_handles(i+index_task) = -1;
                         end
                     end
                 end
                 %% collect diary
                 if strcmpi(state, 'running')
                     for i=1:length(logfile_handles)
+                        % normal update log content
                         file_id = logfile_handles(i);
-                        self.log_print_new(file_id);
+                        if file_id > 2
+                            self.log_print_new(file_id);
+                            continue
+                        end
+                        % check if task is running
+                        if ~strcmpi(tasks(i).State, 'running')
+                            continue
+                        end
+                        % open log file
+                        job_file = tasks(i).InputArguments{1};
+                        [~, job_file_name] = fileparts(job_file.name);
+                        disp([disp_prefix 'Opening diary for: ' job_file_name])
+                        
+                        pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
+                        job_diary = uedgerun.get_latest_file(pattern);
+                        if isempty(job_diary) || ~exist(job_diary, 'file')
+                            disp([disp_prefix 'Diary file not exist: ' job_diary])
+                            continue
+                        end
+                        
+                        fh = fopen(job_diary, 'r');
+                        if fh < 0
+                            disp([disp_prefix 'Failed to open diary: ' job_diary])
+                            continue
+                        end
+                        logfile_handles(i) = fh;
                     end
                     
                     if all(strcmpi({tasks.State}, 'finished'))
