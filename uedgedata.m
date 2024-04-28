@@ -216,7 +216,7 @@ classdef uedgedata < handle
         function mesh_save(self)
             %% gen image script
             script_image_old = self.ur.script_image;
-            self.ur.script_image = self.ur.script_name_gen('prefix', 'uedgeimage');
+            self.ur.script_image = self.ur.generate_uuid_file('prefix', 'uedgeimage');
             contents = {
                 'var_list = [', ...
                 '"com.geometry",', ...

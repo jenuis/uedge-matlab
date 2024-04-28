@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
-% Version: V 0.1.13
+% Version: V 0.1.14
 classdef uedgescan < handle    
     properties
         work_dir
@@ -204,6 +204,12 @@ classdef uedgescan < handle
                 disp_prefix = ['[' num2str(job(1).id) ']' disp_prefix];
             end
             work_dir = job(1).work_dir;
+            %% start diary
+            [~, job_file_name] = fileparts(job_file.name);
+            diary_file = fullfile(job_file.folder, [job_file_name '_log.txt']);
+            diary_file = uedgerun.get_increment_file_name(diary_file);
+            diary(diary_file);
+            diary on
             %% check if the job is running
             if uedgescan.run_lock(fpath, 'check')
                 disp([disp_prefix 'Skip running job: "' job_file.name '"!'])
@@ -227,6 +233,20 @@ classdef uedgescan < handle
             disp([disp_prefix 'Completed: "' fpath '"'])
             delete(fpath)
             uedgescan.run_lock(fpath, 'unlock');
+            %% stop diary
+            diary off
+        end
+        
+        function log_print_new(file_id)
+            current_position = ftell(file_id);
+            fseek(file_id, 0, 'eof');
+            end_position = ftell(file_id);
+
+            if end_position > current_position
+                fseek(file_id, current_position, 'bof');
+                new_content = fread(file_id, end_position - current_position, '*char')';
+                fprintf(new_content);
+            end
         end
     end
     methods
@@ -552,8 +572,8 @@ classdef uedgescan < handle
                         break
                     end
 
-                    for index=1:length(job_files)
-                        uedgescan.run_job_file(job_files(index), varargin{:})
+                    for i=1:length(job_files)
+                        uedgescan.run_job_file(job_files(i), varargin{:})
                     end
                 end
                 return
@@ -576,7 +596,7 @@ classdef uedgescan < handle
             end
             %% main dispath
             tasks = [];
-            diary_lens = [];
+            logfile_handles = [];
             state = 'init'; % 'init', 'running', 'logging', 'finished'
             while(1)
                 %% check if there are new jobs
@@ -608,27 +628,31 @@ classdef uedgescan < handle
                     end
                     
                     if flag_create
-                        diary_lens(end+1:end+task_no) = zeros(1, task_no);
-
-                        for index = index_list
-                            tasks(index) = parfeval(pool, ...
+                        for i = index_list
+                            % create task
+                            job_file = job_files(i);
+                            tasks(i) = parfeval(pool, ...
                                 @self.run_job_file, ... % function name
                                 1, ... % num of output parameters
-                                job_files(index), varargin{:}); % fun arguments
+                                job_file, varargin{:}); % fun arguments
+                            % open log file
+                            [~, job_file_name] = fileparts(job_file.name);
+                            pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
+                            pause(0.5) % make sure the log file is created
+                            job_diary = uedgerun.get_latest_file(pattern);
+                            disp([disp_prefix 'Opening diary: ' job_diary])
+                            logfile_handles(i) = fopen(job_diary, 'r');
+                            if logfile_handles(i) < 0
+                                disp([disp_prefix 'Failed to open diary: ' job_diary])
+                            end
                         end
                     end
                 end
-                %% display diary
+                %% collect diary
                 if strcmpi(state, 'running')
-                    task_no = length(tasks);
-                    for i=1:task_no
-                        diary_len_tmp = length(tasks(i).Diary);
-                        diary_new = tasks(i).Diary(diary_lens(i)+1:diary_len_tmp);
-                        
-                        if ~isempty(diary_new)
-                            diary_lens(i) = diary_len_tmp;
-                            disp(diary_new)
-                        end
+                    for i=1:length(logfile_handles)
+                        file_id = logfile_handles(i);
+                        self.log_print_new(file_id);
                     end
                     
                     if all(strcmpi({tasks.State}, 'finished'))
@@ -638,12 +662,9 @@ classdef uedgescan < handle
                 %% final logging
                 if strcmpi(state, 'logging')
                     disp([disp_prefix 'Logging the rest ...'])
-                    task_no = length(tasks);
-                    for i=1:task_no
-                        diary_new = tasks(i).Diary(diary_lens(i)+1:end);
-                        if ~isempty(diary_new)
-                            disp(diary_new)
-                        end
+                    for i=1:length(logfile_handles)
+                        file_id = logfile_handles(i);
+                        self.log_print_new(file_id);
                     end
                     state = 'finished';
                 end
@@ -656,6 +677,10 @@ classdef uedgescan < handle
             %% clean
             delete(pool)
             diary off
+            for i=1:length(logfile_handles)
+                file_id = logfile_handles(i);
+                fclose(file_id);
+            end
         end
         
         function disp(self, status_filter)

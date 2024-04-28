@@ -1,11 +1,12 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
-% Version: V 0.1.5
+% Version: V 0.1.6
 classdef uedgerun < handle
     properties(Access=private)
         script_run % temp, script will be deleted after calling self.run
         script_input_diff % temp, script will be deleted after calling self.run
+        pycmd = 'python3';
     end
     
     properties(Constant)
@@ -55,12 +56,13 @@ classdef uedgerun < handle
             end
         end
         
-        function script_name = script_name_gen(varargin)
+        function uuid_file = generate_uuid_file(varargin)
             Args.Prefix = 'uedgerun';
+            Args.Extension = '.py';
             Args = parseArgs(varargin, Args);
             
             uuid = char(java.util.UUID.randomUUID);
-            script_name = [Args.Prefix '_' uuid '.py'];
+            uuid_file = [Args.Prefix '_' uuid Args.Extension];
         end
         
         function script_save(file_script, contents)
@@ -273,6 +275,20 @@ classdef uedgerun < handle
 
             new_file_name = fullfile(path, [name num2str(counter+1) ext]);
         end
+        
+        function latest_file = get_latest_file(pattern)
+            %% If no files are found, return an empty string
+            files = dir(pattern);
+            if isempty(files)
+                latest_file = '';
+                return;
+            end
+            %% Sort files by their last modified date in descending order
+            [~, sort_index] = sort([files.datenum], 'descend');
+            files = files(sort_index);
+            %% Get the full path of the latest file
+            latest_file = fullfile(files(1).folder, files(1).name);
+        end
     end
     methods
         function self = uedgerun(input_script, file_init, varargin)
@@ -361,7 +377,7 @@ classdef uedgerun < handle
         end
         
         function file_input_new = script_input_diff_gen(self)
-            file_input_new = self.script_name_gen('prefix', 'uedgeinput');
+            file_input_new = self.generate_uuid_file('prefix', 'uedgeinput');
             args = self.input_diff_update();
             if isempty(args)
                 warning('"input_diff" is empty, input file not being modfied!')
@@ -381,7 +397,7 @@ classdef uedgerun < handle
                 disp_prefix = ['[' num2str(Args.ID) ']' disp_prefix];
             end
             %% gen file names
-            file_run = self.script_name_gen();
+            file_run = self.generate_uuid_file();
             %% collect variables to be write into the script
             profile_init = self.check_existence(self.file_init, 1);
             profile_save = self.file_save;
@@ -437,9 +453,27 @@ classdef uedgerun < handle
         function status = run(self)
             assert(~isempty(self.script_run), 'Call "script_run_gen" to generate the run script!')
             file_run = self.check_existence(self.script_run, 1);
-            status = system(['python3 ' file_run]);
+            status = system([self.pycmd ' ' file_run]);
             delete(file_run)
             delete(self.script_input_diff)
+        end
+        
+        function kill(self, confirm)
+            %% check argument
+            if nargin < 2
+                confirm = true;
+            end
+            %% gen kill command
+            [~, name, ext] = fileparts(self.script_run);
+            file_run = [name ext];
+            assert(contains(file_run, 'uedgerun_') && contains(file_run, '.py'), ['Invalid uedge run file: ' file_run])
+            cmd_run = [self.pycmd ' ' file_run];
+            cmd = ['ps -efH | grep "$(whoami)" | grep "' cmd_run '" | awk "{print $2}" | xargs kill -9'];
+            %% kill
+            if confirm && ~contains(lower(input('Sure to kill the run[yes/no]?', 's')), 'y')
+                return
+            end
+            system(cmd);
         end
     end
 end
