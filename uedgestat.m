@@ -366,7 +366,7 @@ classdef uedgestat < handle
             for i=1:length(phy_names)
                 for j=1:length(location_names)
                     for k=1:length(methods)
-                        disp(['>>>>> collecting values for "' phy_names{i} '" on "' upper(location_names{j}) '" using "' methods{k} '" method ...'])
+                        disp([uedgerun.print_prefix ' Collecting values for "' phy_names{i} '" on "' upper(location_names{j}) '" using "' methods{k} '" method ...'])
                         self.extract_0d(phy_names{i}, location_names{j}, methods{k});
                     end
                 end
@@ -382,10 +382,11 @@ classdef uedgestat < handle
             if ~redo && self.stat_load()
                 return
             end
+            disp_prefix = [uedgerun.print_prefix ' '];
             %% parsing files
-            disp('>>>>> enumerating UEDGE files ...')
+            disp([disp_prefix 'Enumerating UEDGE files ...'])
             self.get_files();
-            disp('>>>>> parsing scanning parameters ...')
+            disp([disp_prefix 'Parsing scanning parameters ...'])
             self.scan_parse_file();
             %% 2D variables
             phy_names = {'nis(1)', 'tes', 'tis', 'ngs', 'tgs'};

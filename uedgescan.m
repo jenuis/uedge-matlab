@@ -2,7 +2,6 @@
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
 % Version: V 0.1.13
-% TODO: make '>>>>> ' a constant across the project
 classdef uedgescan < handle    
     properties
         work_dir
@@ -56,7 +55,6 @@ classdef uedgescan < handle
         
         function job = job_run(job, varargin)
             %% check arguments
-            Args.PrintPrefix = '>>>>> ';
             Args.SkipExist = true;
             Args.ID = [];
             Args.SaveJob = true;
@@ -79,7 +77,7 @@ classdef uedgescan < handle
                 work_dir = job.work_dir;
             end
             
-            disp_prefix = Args.PrintPrefix;
+            disp_prefix = [uedgerun.print_prefix ' '];
             if ~isempty(Args.ID)
                 disp_prefix = ['[' num2str(Args.ID) ']' disp_prefix];
             end
@@ -125,7 +123,7 @@ classdef uedgescan < handle
                     return
                 end
                 %% run
-                ur.script_run_gen('ID', Args.ID, 'PrintPrefix', Args.PrintPrefix);
+                ur.script_run_gen('ID', Args.ID);
                 tic
                 job.status = ur.run();
                 job.elapsed_time = toc;
@@ -147,10 +145,7 @@ classdef uedgescan < handle
             disp([disp_prefix 'Converged status: ' upper(run_status)])
         end
         
-        function logfile_new = log_trim(logfile, varargin)
-            %% check arguments
-            Args.PrintPrefix = '>>>>>';
-            Args = parseArgs(varargin, Args);
+        function logfile_new = log_trim(logfile)
             %% check logfile_new
             [path, name, ext] = fileparts(logfile);
             logfile_new = fullfile(path, [name '_trim' ext]);
@@ -163,7 +158,7 @@ classdef uedgescan < handle
             diary on
             while(~feof(fh))
                 l = fgetl(fh);
-                if strfind(l, Args.PrintPrefix)
+                if strfind(l, uedgerun.print_prefix)
                     disp(l)
                 end
             end
@@ -192,24 +187,35 @@ classdef uedgescan < handle
             delete(lock_file_new)
         end
         
-        function run_job_files(work_dir, job_files, index, varargin)
-            %% get job file
-            fpath = abspath(job_files(index));
-            mf = matfile(fpath);
-            %% check if the job is running
-            if uedgescan.run_lock(fpath, 'check')
-                disp(['>>>>> Skipping running job: "' job_files(index).name '"!'])
-                pause(0.1)
+        function status = run_job_file(job_file, varargin)
+            %% check if file exist
+            status = '';
+            fpath = abspath(job_file);
+            if ~exist(fpath, 'file')
+                warning(["File not exist: " job_file])
                 return
             end
-            %% check and wait init file
+            
+            mf = matfile(fpath);
             job = mf.job;
+            
+            disp_prefix = [uedgerun.print_prefix ' '];
+            if ~isempty(job(1).id)
+                disp_prefix = ['[' num2str(job(1).id) ']' disp_prefix];
+            end
+            work_dir = job(1).work_dir;
+            %% check if the job is running
+            if uedgescan.run_lock(fpath, 'check')
+                disp([disp_prefix 'Skip running job: "' job_file.name '"!'])
+                status = 'running';
+                return
+            end
+            %% check init file
             job_file_fail = uedgerun.generate_file_name(job(1).input_diff, 'suffix', 'fail', 'extension', '.mat');
             job_file_fail = fullfile(work_dir, 'fail', job_file_fail);
-            tic
             if ~exist(job(1).file_init, 'file') && ~exist(job_file_fail, 'file')
-                disp(['[' num2str(job(1).id) ']>>>>> Waiting init file (' num2str(toc) ' s): ' job(1).file_init])
-                pause(0.1)
+                disp([disp_prefix 'No init file: "' job(1).file_init '"'])
+                status = 'unavailable';
                 return
             end
             %% run job
@@ -218,7 +224,7 @@ classdef uedgescan < handle
                 uedgescan.job_run(job(i), varargin{:});
             end
             %% delete job file
-            disp(['>>>>> Completed: "' fpath '"'])
+            disp([disp_prefix 'Completed: "' fpath '"'])
             delete(fpath)
             uedgescan.run_lock(fpath, 'unlock');
         end
@@ -321,6 +327,7 @@ classdef uedgescan < handle
             %% check arguments
             Args.ValueFieldName = 'value';
             Args = parseArgs(varargin, Args);
+            disp_prefix = [uedgerun.print_prefix ' '];
             %% get seq info
             seq = self.scan.(seq_scan_name);
             seq_values = seq.(Args.ValueFieldName);
@@ -335,7 +342,7 @@ classdef uedgescan < handle
             for jobid=1:length(input_diff_list)
                 job = self.job_struct(input_diff_list{jobid}, self.file_init, 'jobid', jobid);
                 job_file = self.job_name_gen(jobid);
-                disp(['>>>>> Generating: "' job_file '"'])
+                disp([disp_prefix 'Generating: "' job_file '"'])
                 save(job_file, 'job')
             end
             %% run sequence
@@ -376,13 +383,14 @@ classdef uedgescan < handle
                         end
                     end
                     job_file = self.job_name_gen(jobid);
-                    disp(['>>>>> Generating: "' job_file '"'])
+                    disp([disp_prefix 'Generating: "' job_file '"'])
                     save(job_file, 'job')
                 end
             end
         end
         
         function job_gen_rerun(self)
+            disp_prefix = [uedgerun.print_prefix ' '];
             savedt_file_list = self.profile_files_get('succeed', 'fileextension', '.hdf5');
             savedt_filenames = {savedt_file_list(:).name};
             input_diff_list = self.scan_traverse(self.scan);
@@ -395,7 +403,7 @@ classdef uedgescan < handle
                                 
                 job = self.job_struct(input_diff, file_init_tmp, 'jobid', jobid);
                 job_file = self.job_name_gen(jobid);
-                disp(['>>>>> Generating: "' job_file '"'])
+                disp([disp_prefix 'Generating: "' job_file '"'])
                 save(job_file, 'job')
             end
         end
@@ -411,8 +419,8 @@ classdef uedgescan < handle
             inds_bad = [];
             for i=1:length(job_files)
                 fpath = abspath(job_files(i));
-                mf = matfile(fpath);
                 try
+                    mf = matfile(fpath);
                     job = mf.job;
                     job = job(1);
                 catch
@@ -445,9 +453,15 @@ classdef uedgescan < handle
                 inds_noinit = [];
                 for i=1:length(job_files)
                     fpath = abspath(job_files(i));
-                    mf = matfile(fpath);
-                    job = mf.job; job = job(1);
-                    if ~exist(job.file_init, 'file')
+                    try
+                        mf = matfile(fpath);
+                        job = mf.job; job = job(1);
+                        job_file_init = job.file_init;
+                    catch
+                        inds_noinit(end+1) = i;
+                        continue
+                    end
+                    if ~exist(job_file_init, 'file')
                         inds_noinit(end+1) = i;
                     end
                 end
@@ -456,6 +470,7 @@ classdef uedgescan < handle
         end
         
         function job_update(self)
+            disp_prefix = [uedgerun.print_prefix ' '];
             job_files = self.job_get_files();
             for i=1:length(job_files)
                 job_file = abspath(job_files(i));
@@ -476,7 +491,7 @@ classdef uedgescan < handle
                 end
                 %% delete done
                 if isempty(index_pending)
-                    disp(['>>>>> Deleting completed: "' job_file '"'])
+                    disp([disp_prefix 'Deleting completed: "' job_file '"'])
                     delete(job_file)
                     continue
                 end                
@@ -503,7 +518,6 @@ classdef uedgescan < handle
            
         function diary_file = run(self, varargin)
             %% check arguments
-            Args.PrintPrefix = '>>>>> ';
             Args.SkipExist = true;
             Args.ID = [];
             Args.SaveJob = true;
@@ -511,17 +525,20 @@ classdef uedgescan < handle
             Args.UseParallel = true;
             Args.NumWorkers = maxNumCompThreads;
             Args.LogFileName = 'uedgescan_log.txt';
+            Args.PauseTime = 0.5;
             Args = parseArgs(varargin, Args, {'SaveJob', 'SkipExist', 'UseParallel'});
             
             use_parallel = Args.UseParallel;
-            dir_work = self.work_dir;
             num_workers = Args.NumWorkers;
             log_file_name = Args.LogFileName;
+            pause_time = Args.PauseTime;
             
             Args = rmfield(Args, 'UseParallel');
             Args = rmfield(Args, 'NumWorkers');
             Args = rmfield(Args, 'LogFileName');
+            Args = rmfield(Args, 'PauseTime');
             varargin = struct2vararg(Args);
+            disp_prefix = [uedgerun.print_prefix ' '];
             %% open diary
             diary_file = uedgerun.get_increment_file_name(log_file_name);
             diary(diary_file)
@@ -531,12 +548,12 @@ classdef uedgescan < handle
                 while(1)
                     job_files = self.job_get_files('ExcludeRunning', 'ExcludeNoInitProfile');
                     if isempty(job_files)
-                        disp('>>>>> Exit with no jobs!')
+                        disp([disp_prefix 'Exit with no jobs!'])
                         break
                     end
 
                     for index=1:length(job_files)
-                        uedgescan.run_job_files(dir_work, job_files, index, varargin{:})
+                        uedgescan.run_job_file(job_files(index), varargin{:})
                     end
                 end
                 return
@@ -547,14 +564,14 @@ classdef uedgescan < handle
             
             %% create parpool
             if isempty(gcp('nocreate'))
-                disp('>>>>> Creating parallel pool ...')
+                disp([disp_prefix 'Creating parallel pool ...'])
                 try
                     pool = parpool(num_workers);
                 catch
                     pool = parpool();
                 end
             else
-                disp('>>>>> Use existing parallel pool!')
+                disp([disp_prefix 'Use existing parallel pool!'])
                 pool = gcp;
             end
             %% main dispath
@@ -567,7 +584,7 @@ classdef uedgescan < handle
                 task_no = length(job_files);
                 
                 if task_no == 0 && (strcmpi(state, 'init') || strcmpi(state, 'finished'))
-                    disp('>>>>> Exit with no jobs!')
+                    disp([disp_prefix 'Exit with no jobs!'])
                     break
                 end
                 %% create tasks     
@@ -578,7 +595,7 @@ classdef uedgescan < handle
                     if strcmpi(state, 'init')
                         tasks = parallel.FevalFuture.empty(0, task_no);
                         flag_create = true;
-                        disp(['>>>>> Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
+                        disp([disp_prefix 'Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
                         state = 'running';
                     elseif sum( ...
                             strcmpi({tasks.State}, 'running') | ...
@@ -587,7 +604,7 @@ classdef uedgescan < handle
                             ) < num_workers
                         index_list = index_list + length(tasks);
                         flag_create = true;
-                        disp(['>>>>> Adding parallel tasks (NO. is ' num2str(task_no) ') ...'])
+                        disp([disp_prefix 'Adding parallel tasks (NO. is ' num2str(task_no) ') ...'])
                     end
                     
                     if flag_create
@@ -595,9 +612,9 @@ classdef uedgescan < handle
 
                         for index = index_list
                             tasks(index) = parfeval(pool, ...
-                                @self.run_job_files, ... % function name
-                                0, ... % num of output parameters
-                                dir_work, job_files, index, varargin{:}); % fun arguments
+                                @self.run_job_file, ... % function name
+                                1, ... % num of output parameters
+                                job_files(index), varargin{:}); % fun arguments
                         end
                     end
                 end
@@ -620,6 +637,7 @@ classdef uedgescan < handle
                 end
                 %% final logging
                 if strcmpi(state, 'logging')
+                    disp([disp_prefix 'Logging the rest ...'])
                     task_no = length(tasks);
                     for i=1:task_no
                         diary_new = tasks(i).Diary(diary_lens(i)+1:end);
@@ -630,7 +648,10 @@ classdef uedgescan < handle
                     state = 'finished';
                 end
                 %% pause
-                pause(0.5)
+                pause(pause_time)
+                diary off
+                disp(['Waiting ' num2str(pause_time) ' second ...'])
+                diary on
             end
             %% clean
             delete(pool)
@@ -663,14 +684,14 @@ classdef uedgescan < handle
         function remain(self, varargin)
             job_list_all = self.scan_traverse(self.scan);
             len_all = length(job_list_all);
-            disp(['>>>>> All cases: ' num2str(len_all)])
+            disp(['All cases: ' num2str(len_all)])
             job_list_succeeded = self.profile_files_get('succeeded', 'fileextension', '.hdf5');
             len_succeeded = length(job_list_succeeded);
-            disp(['>>>>> Succeded cases: ' num2str(len_succeeded)])
+            disp(['Succeded cases: ' num2str(len_succeeded)])
             job_list_failed = self.profile_files_get('failed', 'fileextension', '.mat');
             len_failed = length(job_list_failed);
-            disp(['>>>>> Failed cases: ' num2str(len_failed)])
-            disp(['>>>>> Remain cases: ' num2str(len_all - len_succeeded - len_failed)])
+            disp(['Failed cases: ' num2str(len_failed)])
+            disp(['Remain cases: ' num2str(len_all - len_succeeded - len_failed)])
         end
              
         function clean(self)

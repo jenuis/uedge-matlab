@@ -13,6 +13,7 @@ classdef uedgerun < handle
         file_image_prefix = 'images';
         file_mesh_prefix = 'mesh';
         file_extension = '.hdf5';
+        print_prefix = '>>>>>';
     end
     
     properties
@@ -372,11 +373,10 @@ classdef uedgerun < handle
         
         function file_run = script_run_gen(self, varargin)
             %% check arguments
-            Args.PrintPrefix = '>>>>> ';
             Args.ID = [];
             Args = parseArgs(varargin, Args);
             
-            disp_prefix = Args.PrintPrefix;
+            disp_prefix = [self.print_prefix ' '];
             if ~isempty(Args.ID)
                 disp_prefix = ['[' num2str(Args.ID) ']' disp_prefix];
             end
