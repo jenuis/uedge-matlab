@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
-% Version: V 0.1.12
+% Version: V 0.1.13
 % TODO: make '>>>>> ' a constant across the project
 classdef uedgescan < handle    
     properties
@@ -147,6 +147,28 @@ classdef uedgescan < handle
             disp([disp_prefix 'Converged status: ' upper(run_status)])
         end
         
+        function logfile_new = log_trim(logfile, varargin)
+            %% check arguments
+            Args.PrintPrefix = '>>>>>';
+            Args = parseArgs(varargin, Args);
+            %% check logfile_new
+            [path, name, ext] = fileparts(logfile);
+            logfile_new = fullfile(path, [name '_trim' ext]);
+            if exist(logfile_new, 'file')
+                warning('File has already trimmed! Current file will be overwritten!')
+            end
+            %% trim log 
+            fh = fopen(logfile, 'r');
+            diary(logfile_new);
+            diary on
+            while(~feof(fh))
+                l = fgetl(fh);
+                if strfind(l, Args.PrintPrefix)
+                    disp(l)
+                end
+            end
+            diary off
+        end
     end
     methods(Access=private, Static)
         function status = run_lock(lock_file, mode)
@@ -219,6 +241,9 @@ classdef uedgescan < handle
             self.script_input = uedgerun.check_existence(script_input, 1);
             self.file_init = uedgerun.check_existence(file_init, 1);
             self.script_image = uedgerun.check_existence(Args.ImageScript);
+            %% copy files for uedgestat and uedgedata to work
+            copyfile(self.script_input, self.work_dir)
+            copyfile('mesh.hdf5', self.work_dir)
         end
         
         function scan_load(self)
@@ -375,22 +400,59 @@ classdef uedgescan < handle
             end
         end
         
-        function job_files = job_get_files(self, no_running)
+        function job_files = job_get_files(self, varargin)
+            %% check arguments
+            Args.ExcludeRunning = false;
+            Args.ExcludeNoInitProfile = false;
+            
+            Args = parseArgs(varargin, Args, {'ExcludeRunning', 'ExcludeNoInitProfile'});
             %% get all jobs
             job_files = dir(fullfile(self.work_dir, [self.job_file_prefix, '*.mat']));
-            if nargin < 2 || ~no_running
-                return
-            end
-            %% remove running jobs
-            inds_running = [];
+            inds_bad = [];
             for i=1:length(job_files)
                 fpath = abspath(job_files(i));
-                lock_file = strrep(fpath, '.mat', '.mat.lock');
-                if exist(lock_file, 'file')
-                    inds_running(end+1) = i;
+                mf = matfile(fpath);
+                try
+                    job = mf.job;
+                    job = job(1);
+                catch
+                    inds_bad(end+1) = i;
+                    continue
+                end
+                
+                if ~isfield(job, 'input_diff') || ...
+                        ~isfield(job, 'file_init') || ...
+                        ~isfield(job, 'script_input') || ...
+                        ~isfield(job, 'script_image')
+                    inds_bad(end+1) = i;
                 end
             end
-            job_files(inds_running) = [];
+            job_files(inds_bad) = [];
+            %% remove running jobs
+            if Args.ExcludeRunning
+                inds_running = [];
+                for i=1:length(job_files)
+                    fpath = abspath(job_files(i));
+                    lock_file = strrep(fpath, '.mat', '.mat.lock');
+                    if exist(lock_file, 'file')
+                        inds_running(end+1) = i;
+                    end
+                end
+                job_files(inds_running) = [];
+            end
+            %% remove jobs with init profile not ready
+            if Args.ExcludeNoInitProfile
+                inds_noinit = [];
+                for i=1:length(job_files)
+                    fpath = abspath(job_files(i));
+                    mf = matfile(fpath);
+                    job = mf.job; job = job(1);
+                    if ~exist(job.file_init, 'file')
+                        inds_noinit(end+1) = i;
+                    end
+                end
+                job_files(inds_noinit) = [];
+            end
         end
         
         function job_update(self)
@@ -439,7 +501,7 @@ classdef uedgescan < handle
             end
         end
            
-        function run(self, varargin)
+        function diary_file = run(self, varargin)
             %% check arguments
             Args.PrintPrefix = '>>>>> ';
             Args.SkipExist = true;
@@ -467,7 +529,7 @@ classdef uedgescan < handle
             %% normal run
             if ~use_parallel
                 while(1)
-                    job_files = self.job_get_files(1);
+                    job_files = self.job_get_files('ExcludeRunning', 'ExcludeNoInitProfile');
                     if isempty(job_files)
                         disp('>>>>> Exit with no jobs!')
                         break
@@ -495,44 +557,80 @@ classdef uedgescan < handle
                 disp('>>>>> Use existing parallel pool!')
                 pool = gcp;
             end
+            %% main dispath
+            tasks = [];
+            diary_lens = [];
+            state = 'init'; % 'init', 'running', 'logging', 'finished'
             while(1)
-                %% check if jobs are done
-                job_files = self.job_get_files(1);
-                if isempty(job_files)
+                %% check if there are new jobs
+                job_files = self.job_get_files('ExcludeRunning', 'ExcludeNoInitProfile');
+                task_no = length(job_files);
+                
+                if task_no == 0 && (strcmpi(state, 'init') || strcmpi(state, 'finished'))
                     disp('>>>>> Exit with no jobs!')
                     break
                 end
-                %% create tasks
-                task_no = length(job_files);
-                disp(['>>>>> Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
-                
-                tasks = parallel.FevalFuture.empty(0, task_no);
-                for index = 1:task_no
-                    tasks(index) = parfeval(pool, ...
-                        @self.run_job_files, ... % function name
-                        0, ... % num of output parameters
-                        dir_work, job_files, index, varargin{:}); % fun arguments
+                %% create tasks     
+                if task_no > 0                    
+                    flag_create = false;
+                    index_list = 1:task_no;
+                    
+                    if strcmpi(state, 'init')
+                        tasks = parallel.FevalFuture.empty(0, task_no);
+                        flag_create = true;
+                        disp(['>>>>> Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
+                        state = 'running';
+                    elseif sum( ...
+                            strcmpi({tasks.State}, 'running') | ...
+                            strcmpi({tasks.State}, 'pending') | ...
+                            strcmpi({tasks.State}, 'queued') ...
+                            ) < num_workers
+                        index_list = index_list + length(tasks);
+                        flag_create = true;
+                        disp(['>>>>> Adding parallel tasks (NO. is ' num2str(task_no) ') ...'])
+                    end
+                    
+                    if flag_create
+                        diary_lens(end+1:end+task_no) = zeros(1, task_no);
+
+                        for index = index_list
+                            tasks(index) = parfeval(pool, ...
+                                @self.run_job_files, ... % function name
+                                0, ... % num of output parameters
+                                dir_work, job_files, index, varargin{:}); % fun arguments
+                        end
+                    end
                 end
-                %% examine diary
-                diary_lens = zeros(1, task_no);
-                while(~all(strcmpi({tasks.State}, 'finished')))
+                %% display diary
+                if strcmpi(state, 'running')
+                    task_no = length(tasks);
                     for i=1:task_no
                         diary_len_tmp = length(tasks(i).Diary);
                         diary_new = tasks(i).Diary(diary_lens(i)+1:diary_len_tmp);
+                        
                         if ~isempty(diary_new)
                             diary_lens(i) = diary_len_tmp;
                             disp(diary_new)
                         end
                     end
-                    pause(0.1)
-                end
-
-                for i=1:task_no
-                    diary_new = tasks(i).Diary(diary_lens(i)+1:end);
-                    if ~isempty(diary_new)
-                        disp(diary_new)
+                    
+                    if all(strcmpi({tasks.State}, 'finished'))
+                        state = 'logging';
                     end
                 end
+                %% final logging
+                if strcmpi(state, 'logging')
+                    task_no = length(tasks);
+                    for i=1:task_no
+                        diary_new = tasks(i).Diary(diary_lens(i)+1:end);
+                        if ~isempty(diary_new)
+                            disp(diary_new)
+                        end
+                    end
+                    state = 'finished';
+                end
+                %% pause
+                pause(0.5)
             end
             %% clean
             delete(pool)
