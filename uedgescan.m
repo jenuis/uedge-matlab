@@ -145,8 +145,18 @@ classdef uedgescan < handle
             disp([disp_prefix 'Converged status: ' upper(run_status)])
         end
         
-        function logfile_new = log_trim(logfile)
+        function logfile_new = log_trim(logfile, varargin)
             %% check arguments
+            Args.ExtraPrintPrefix = {};
+            Args = parseArgs(varargin, Args);
+            
+            if ischar(Args.ExtraPrintPrefix)
+                Args.ExtraPrintPrefix = {Args.ExtraPrintPrefix};
+            end
+            
+            print_prefix_list = {uedgerun.print_prefix};
+            print_prefix_list = [print_prefix_list Args.ExtraPrintPrefix];
+            
             assert(exist(logfile, 'file'), 'File not exist!')
             %% check logfile_new
             [path, name, ext] = fileparts(logfile);
@@ -160,8 +170,10 @@ classdef uedgescan < handle
             diary on
             while(~feof(fh))
                 l = fgetl(fh);
-                if strfind(l, uedgerun.print_prefix)
-                    disp(l)
+                for i=1:length(print_prefix_list)
+                    if contains(l, print_prefix_list{i})
+                        disp(l)
+                    end
                 end
             end
             diary off
@@ -702,11 +714,14 @@ classdef uedgescan < handle
             end
         end
         
-        function disp(self, status_filter)
-            if nargin < 2
-                status_filter = {'successful', 'failed', 'pending'};
-            end
+        function disp(self, varargin)
+            %% check arguments
+            Args.Status = {'successful', 'failed', 'pending'};
+            Args.Verbose = false;
+            Args = parseArgs(varargin, Args, {'Verbose'});
             
+            status_filter = Args.Status;
+            %% disp job status
             job_files = self.job_get_files();
             for i=1:length(job_files)
                 f = job_files(i);
@@ -719,7 +734,11 @@ classdef uedgescan < handle
                     [~, profile_init] = fileparts(job(j).file_init);
                     status = self.job_status(job(j).input_diff);
                     if ~isempty(status_filter) && any(contains(lower(status_filter), lower(status(1:4))))
-                        disp(['"' str_save '" <-- "' profile_init '", "' upper(status) '"'])
+                        if Args.Verbose
+                            disp(['"' str_save '" <-- "' profile_init '", "' upper(status) '"'])
+                            continue
+                        end
+                        disp(['"' str_save '": "' upper(status) '"'])
                     end                    
                 end
             end

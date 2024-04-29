@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
-% Version: V 0.1.6
+% Version: V 0.1.7
 classdef uedgerun < handle
     properties(Access=private)
         script_run % temp, script will be deleted after calling self.run
@@ -66,6 +66,11 @@ classdef uedgerun < handle
         end
         
         function script_save(file_script, contents)
+            %% check argument
+            if iscellstr(contents) || isstring(contents)
+                contents = strjoin(contents, '\n');
+            end
+            %% save conetents
             fid = fopen(file_script, 'w');
             fprintf(fid, '%s', contents);
             fclose(fid);
@@ -178,8 +183,6 @@ classdef uedgerun < handle
                 contents{end+1} = line;
                 disp(['+ ' line])
             end
-            %% join to text
-            contents = strjoin(contents, '\n');
             %% save
             uedgerun.script_save(input_script, contents);
         end
@@ -193,16 +196,14 @@ classdef uedgerun < handle
                 vararg_len = length(varargin);
             end
             assert(mod(vararg_len, 2)==0, 'The input arguments are not paired!')
+            disp_prefix = [uedgerun.print_prefix ' '];
             %% scan and modify
             contents = {};
-            fid = fopen(input_script);
-            while(1)
-                %% end line, exit
+            args_replaced = {};
+            fid = fopen(input_script, 'r');
+            while(~feof(fid))
+                %% add line to contents
                 line = fgetl(fid);
-                if ~ischar(line)
-                    break
-                end
-                %% add to contents
                 contents{end+1} = line;
                 %% check if this line is an input
                 if ~contains(line, '=')
@@ -212,7 +213,6 @@ classdef uedgerun < handle
                 arg_name_org = strsplit(line, '=');
                 arg_name_org = arg_name_org{1};
                 %% compare and modify input
-                %TODO: find a method to judge if all modified
                 for i=1:(vararg_len/2)
                     arg_name = varargin{2*i-1};
                     arg_val = varargin{2*i};
@@ -221,13 +221,17 @@ classdef uedgerun < handle
                     end
                     line_new = [arg_name ' = ' num2str(arg_val)];
                     contents{end} = line_new;
-                    disp(['- ' line])
-                    disp(['+ ' line_new])
+                    disp([disp_prefix '- ' line])
+                    disp([disp_prefix '+ ' line_new])
+                    args_replaced{end+1} = arg_name;
                 end
             end
             fclose(fid);
-            %% join to text
-            contents = strjoin(contents, '\n');
+            %% check if all inputs are modified
+            args_left = setdiff(varargin(1:2:end), args_replaced);
+            if ~isempty(args_left)
+                warning([disp_prefix 'The following parameters are not modified: "' strjoin(args_left, ', ') '"!'])
+            end
         end
         
         function clean(tar_dir)
@@ -420,7 +424,7 @@ classdef uedgerun < handle
                 contents{end+1} = line;
             end
             fclose(fh);
-            self.script_save(rd_in_script, strjoin(contents, '\n'));
+            self.script_save(rd_in_script, contents);
             %% gen run script content
             contents = {
                 'import os', ...
@@ -457,7 +461,6 @@ classdef uedgerun < handle
                 contents{end+1} = ['print("' disp_prefix 'Exec: " + image_script)'];
                 contents{end+1} = 'exec(open(image_script).read())';
             end
-            contents = strjoin(contents, '\n');
             %% save script
             self.script_save(file_run, contents)
             self.script_run = file_run;
