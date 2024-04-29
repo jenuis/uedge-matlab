@@ -265,7 +265,7 @@ classdef uedgerun < handle
             %% Extract file_name
             [path, name, ext] = fileparts(file_name);
             %% Increment the file name
-            files = dir([name '*' ext]);
+            files = dir(fullfile(path, [name '*' ext]));
             counter = 0;
             for i=1:length(files)
                 [~,tmp_name] = fileparts(files(i).name);
@@ -466,12 +466,30 @@ classdef uedgerun < handle
             self.script_run = file_run;
         end
         
-        function status = run(self)
-            assert(~isempty(self.script_run), 'Call "script_run_gen" to generate the run script!')
+        function [status, reason] = run(self)
+            %% check if self.script_run is empty
+            if isempty(self.script_run)
+                self.script_run_gen();
+                warning([uedgerun.print_prefix ' Automatically call "script_run_gen()" to generate the run script!'])
+            end
+            %% generate command
             file_run = self.check_existence(self.script_run, 1);
-            status = system([self.pycmd ' ' file_run]);
+            cmd = [self.pycmd ' ' file_run];
+            %% call system to run command
+            status = system(cmd);
+            %% clean
             delete(file_run)
             delete(self.script_input_diff)
+            %% analyze the reason why status != 0
+            reason = '';
+            if status == 0
+                return
+            end
+            
+            if abs(status) == 9 || abs(status) == 128+9
+                reason = 'killed';
+                return
+            end
         end
         
         function kill(self, confirm)

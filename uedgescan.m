@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
-% Version: V 0.1.14
+% Version: V 0.1.15
 classdef uedgescan < handle    
     properties
         work_dir
@@ -53,7 +53,7 @@ classdef uedgescan < handle
             end
         end
         
-        function job = job_run(job, varargin)
+        function job = run_basic(job, varargin)
             %% check arguments
             Args.SkipExist = true;
             Args.ID = [];
@@ -86,10 +86,13 @@ classdef uedgescan < handle
             if ~exist(fail_dir, 'dir')
                 mkdir(fail_dir);
             end
+            
             job_file_fail = uedgerun.generate_file_name(job.input_diff, 'suffix', 'fail', 'extension', '.mat');
             job_file_fail = fullfile(fail_dir, job_file_fail);
             if exist(job_file_fail, 'file')
                 disp([disp_prefix 'Skip failed job: ' job_file_fail])
+                job.status = NaN;
+                job.reason = 'skipped, failed';
                 return
             end
             %% check init file
@@ -104,7 +107,8 @@ classdef uedgescan < handle
             %% run job            
             if flag_fail
                 %% omit run
-                job.status = -1; % no init file
+                job.status = NaN; % no init file
+                job.reason = 'unavailable';
                 disp([disp_prefix 'No init file: ' job.file_init])
             else
                 %% set input_diff
@@ -120,12 +124,14 @@ classdef uedgescan < handle
                 ur.file_save = fullfile(work_dir, ur.generate_file_name(ur.input_diff));
                 if Args.SkipExist && exist(ur.file_save, 'file')
                     disp([disp_prefix 'Skip exist: ' ur.file_save])
+                    job.status = NaN;
+                    job.reason = 'skipped, successful';
                     return
                 end
                 %% run
                 ur.script_run_gen('ID', Args.ID);
                 tic
-                job.status = ur.run();
+                [job.status, job.reason] = ur.run();
                 job.elapsed_time = toc;
                 disp([disp_prefix 'Total time used: ' num2str(job.elapsed_time/60) ' minutes!'])
             end
@@ -134,15 +140,114 @@ classdef uedgescan < handle
                 return
             end
             
-            if job.status == 0
+            reason = lower(job.reason);
+            if isempty(reason)
                 job_file = strrep(ur.file_save, ur.file_extension, '.mat');
                 run_status = 'successful';
+            elseif contains(reason, 'kill')
+                job_file = [];
+                run_status = 'killed';
             else
                 job_file = job_file_fail;
                 run_status = 'failed';
             end
-            save(job_file, 'job')
+            
+            if ~isempty(job_file)
+                save(job_file, 'job')
+            end
             disp([disp_prefix 'Converged status: ' upper(run_status)])
+        end
+        
+        function status = run_job_file(job_file, varargin)
+            %% check if file exist
+            status = '';
+            fpath = abspath(job_file);
+            if ~exist(fpath, 'file')
+                warning(["File not exist: " fpath])
+                return
+            end
+            
+            mf = matfile(fpath);
+            job = mf.job;
+            
+            disp_prefix = [uedgerun.print_prefix ' '];
+            if ~isempty(job(1).id)
+                disp_prefix = ['[' num2str(job(1).id) ']' disp_prefix];
+            end
+            work_dir = job(1).work_dir;
+            %% start diary
+            [~, job_file_name] = fileparts(job_file.name);
+            diary_file = fullfile(job_file.folder, [job_file_name '_log.txt']);
+            diary_file = uedgerun.get_increment_file_name(diary_file);
+            disp([disp_prefix 'Created diary file: "' diary_file '"'])
+            diary(diary_file);
+            diary on
+            %% check if the job is running
+            if uedgescan.run_lock(fpath, 'check')
+                disp([disp_prefix 'Skip running job: "' job_file.name '"!'])
+                status = 'running';
+                return
+            end
+            %% check init file
+            job_file_fail = uedgerun.generate_file_name(job(1).input_diff, 'suffix', 'fail', 'extension', '.mat');
+            job_file_fail = fullfile(work_dir, 'fail', job_file_fail);
+            if ~exist(job(1).file_init, 'file') && ~exist(job_file_fail, 'file')
+                disp([disp_prefix 'No init file: "' job(1).file_init '"'])
+                status = 'unavailable';
+                return
+            end
+            %% run job
+            uedgescan.run_lock(fpath, 'lock');
+            for i=1:length(job)
+                job_new = uedgescan.run_basic(job(i), varargin{:});
+                reason = lower(job_new.reason);
+                if isempty(reason)
+                    continue
+                end
+                
+                if contains(reason, 'kill')
+                    break
+                end
+            end
+            %% delete job file
+            disp([disp_prefix 'Completed: "' fpath '"'])
+            delete(fpath)
+            uedgescan.run_lock(fpath, 'unlock');
+            %% stop diary
+            diary off
+        end
+        
+        function status = run_lock(lock_file, mode)
+            mode = lower(mode);
+            assert(haselement({'lock', 'unlock', 'check'}, mode), '"mode" should be in {"lock", "unlock", "check"}')
+            lock_file_new = [lock_file '.lock']; % avoiding accident overwrite
+            %% check
+            if strcmpi(mode, 'check')
+                status = exist(lock_file_new, 'file');
+                return 
+            end
+            %% write lock file
+            if strcmpi(mode, 'lock')
+                assert(~uedgescan.run_lock(lock_file, 'check'), 'already locked!')
+                uedgerun.script_save(lock_file_new, '');
+                return
+            end
+            %% delete lock file
+            assert(strcmpi(mode, 'unlock'), 'should be the only left mode!')
+            assert(uedgescan.run_lock(lock_file, 'check'), 'lock file should exist!')
+            delete(lock_file_new)
+        end
+        
+        function log_print_new(file_id)
+            current_position = ftell(file_id);
+            fseek(file_id, 0, 'eof');
+            end_position = ftell(file_id);
+
+            if end_position > current_position
+                fseek(file_id, current_position, 'bof');
+                new_content = fread(file_id, end_position - current_position, '*char')';
+                fprintf(new_content);
+            end
         end
         
         function logfile_new = log_trim(logfile, varargin)
@@ -177,91 +282,7 @@ classdef uedgescan < handle
                 end
             end
             diary off
-        end
-    end
-    methods(Access=private, Static)
-        function status = run_lock(lock_file, mode)
-            mode = lower(mode);
-            assert(haselement({'lock', 'unlock', 'check'}, mode), '"mode" should be in {"lock", "unlock", "check"}')
-            lock_file_new = [lock_file '.lock']; % avoiding accident overwrite
-            %% check
-            if strcmpi(mode, 'check')
-                status = exist(lock_file_new, 'file');
-                return 
-            end
-            %% write lock file
-            if strcmpi(mode, 'lock')
-                assert(~uedgescan.run_lock(lock_file, 'check'), 'already locked!')
-                uedgerun.script_save(lock_file_new, '');
-                return
-            end
-            %% delete lock file
-            assert(strcmpi(mode, 'unlock'), 'should be the only left mode!')
-            assert(uedgescan.run_lock(lock_file, 'check'), 'lock file should exist!')
-            delete(lock_file_new)
-        end
-        
-        function status = run_job_file(job_file, varargin)
-            %% check if file exist
-            status = '';
-            fpath = abspath(job_file);
-            if ~exist(fpath, 'file')
-                warning(["File not exist: " job_file])
-                return
-            end
-            
-            mf = matfile(fpath);
-            job = mf.job;
-            
-            disp_prefix = [uedgerun.print_prefix ' '];
-            if ~isempty(job(1).id)
-                disp_prefix = ['[' num2str(job(1).id) ']' disp_prefix];
-            end
-            work_dir = job(1).work_dir;
-            %% start diary
-            [~, job_file_name] = fileparts(job_file.name);
-            diary_file = fullfile(job_file.folder, [job_file_name '_log.txt']);
-            diary_file = uedgerun.get_increment_file_name(diary_file);
-            diary(diary_file);
-            diary on
-            %% check if the job is running
-            if uedgescan.run_lock(fpath, 'check')
-                disp([disp_prefix 'Skip running job: "' job_file.name '"!'])
-                status = 'running';
-                return
-            end
-            %% check init file
-            job_file_fail = uedgerun.generate_file_name(job(1).input_diff, 'suffix', 'fail', 'extension', '.mat');
-            job_file_fail = fullfile(work_dir, 'fail', job_file_fail);
-            if ~exist(job(1).file_init, 'file') && ~exist(job_file_fail, 'file')
-                disp([disp_prefix 'No init file: "' job(1).file_init '"'])
-                status = 'unavailable';
-                return
-            end
-            %% run job
-            uedgescan.run_lock(fpath, 'lock');
-            for i=1:length(job)
-                uedgescan.job_run(job(i), varargin{:});
-            end
-            %% delete job file
-            disp([disp_prefix 'Completed: "' fpath '"'])
-            delete(fpath)
-            uedgescan.run_lock(fpath, 'unlock');
-            %% stop diary
-            diary off
-        end
-        
-        function log_print_new(file_id)
-            current_position = ftell(file_id);
-            fseek(file_id, 0, 'eof');
-            end_position = ftell(file_id);
-
-            if end_position > current_position
-                fseek(file_id, current_position, 'bof');
-                new_content = fread(file_id, end_position - current_position, '*char')';
-                fprintf(new_content);
-            end
-        end
+        end        
     end
     methods
         function self = uedgescan(work_dir, script_input, file_init, varargin)
@@ -695,7 +716,9 @@ classdef uedgescan < handle
                     disp([disp_prefix 'Logging the rest ...'])
                     for i=1:length(logfile_handles)
                         file_id = logfile_handles(i);
-                        self.log_print_new(file_id);
+                        if file_id > 2
+                            self.log_print_new(file_id);
+                        end
                     end
                     state = 'finished';
                 end
@@ -710,7 +733,9 @@ classdef uedgescan < handle
             diary off
             for i=1:length(logfile_handles)
                 file_id = logfile_handles(i);
-                fclose(file_id);
+                if file_id > 2
+                    fclose(file_id);
+                end
             end
         end
         
