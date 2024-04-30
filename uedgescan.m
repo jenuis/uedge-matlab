@@ -595,9 +595,11 @@ classdef uedgescan < handle
             varargin = struct2vararg(Args);
             disp_prefix = [uedgerun.print_prefix ' '];
             %% open diary
+            start_time = now();
             diary_file = uedgerun.get_increment_file_name(log_file_name);
             diary(diary_file)
             diary on
+            disp([disp_prefix 'Start time: ' datestr(start_time)])
             %% normal run
             if ~use_parallel
                 while(1)
@@ -690,12 +692,11 @@ classdef uedgescan < handle
                         % open log file
                         job_file = tasks(i).InputArguments{1};
                         [~, job_file_name] = fileparts(job_file.name);
-                        disp([disp_prefix 'Opening diary for: ' job_file_name])
                         
                         pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
-                        job_diary = uedgerun.get_latest_file(pattern);
+                        job_diary = uedgerun.get_latest_file(pattern, start_time);
                         if isempty(job_diary) || ~exist(job_diary, 'file')
-                            disp([disp_prefix 'Diary file not exist: ' job_diary])
+                            disp([disp_prefix 'Diary file currently not exist for "' job_file_name '"!'])
                             continue
                         end
                         
@@ -704,6 +705,8 @@ classdef uedgescan < handle
                             disp([disp_prefix 'Failed to open diary: ' job_diary])
                             continue
                         end
+                        
+                        disp([disp_prefix 'Opened diary: ' job_diary])
                         logfile_handles(i) = fh;
                     end
                     
@@ -729,14 +732,15 @@ classdef uedgescan < handle
                 diary on
             end
             %% clean
-            delete(pool)
-            diary off
             for i=1:length(logfile_handles)
                 file_id = logfile_handles(i);
                 if file_id > 2
                     fclose(file_id);
                 end
             end
+            delete(pool)
+            disp([disp_prefix 'End time: ' datestr(now)])
+            diary off
         end
         
         function disp(self, varargin)

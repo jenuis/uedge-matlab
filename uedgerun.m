@@ -2,6 +2,7 @@
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
 % Version: V 0.1.7
+% TODO: Use uedge.rundt.UeRun to replace rdcontdt.py
 classdef uedgerun < handle
     properties(Access=private)
         script_run % temp, script will be deleted after calling self.run
@@ -281,18 +282,27 @@ classdef uedgerun < handle
             new_file_name = fullfile(path, [name num2str(counter+1) ext]);
         end
         
-        function latest_file = get_latest_file(pattern)
+        function latest_file_path = get_latest_file(pattern, datenum_point)
+            %% Check arguments
+            if nargin < 2
+                datenum_point = [];
+            end
+            latest_file_path = '';
             %% If no files are found, return an empty string
             files = dir(pattern);
             if isempty(files)
-                latest_file = '';
                 return;
             end
             %% Sort files by their last modified date in descending order
             [~, sort_index] = sort([files.datenum], 'descend');
             files = files(sort_index);
+            %% Check if the datenum of the latest file is newer than datenum_point
+            latest_file = files(1);
+            if ~isempty(datenum_point) && latest_file.datenum < datenum_point
+                return
+            end
             %% Get the full path of the latest file
-            latest_file = fullfile(files(1).folder, files(1).name);
+            latest_file_path = fullfile(latest_file.folder, latest_file.name);
         end
     end
     methods
