@@ -114,14 +114,33 @@ classdef uedgerun < handle
             end
         end
         
-        function str = parse_file_name(file_name, varargin)
-            Args.Delimiter = '_';
+        function scan_para = parse_profile_name(file_name, varargin)
+            % TODO: can not be parsed for f1e-10.
+            % since we have job file, this func can be deprecated
+            
+            warning('Deprecated. Load savedt*.mat for scan value!')
+            
+            Args.NameDelimiter = '_';
+            Args.ScanDelimiter = '-';
+            Args.RegularExpressionPattern = '([a-zA-Z]+)(.*)';
             Args = parseArgs(varargin, Args);
             
             [~, file_name] = fileparts(file_name);
-            file_name_splits = strsplit(file_name, Args.Delimiter);
+            file_name_splits = strsplit(file_name, Args.NameDelimiter);
             assert(length(file_name_splits) == 3, 'Fail to parse!')
-            str = file_name_splits{2};
+            input_diff_str = file_name_splits{2};
+            
+            input_diff_str_splits = strsplit(input_diff_str, Args.ScanDelimiter);
+            scan_para = struct();
+            for i=1:length(input_diff_str_splits)
+                match = regexp(input_diff_str_splits{i}, Args.RegularExpressionPattern, 'tokens');
+                if ~isempty(match)
+                    value = str2double(match{1}{2});
+                    letters = match{1}{1};
+                    scan_name = letters;
+                    scan_para.(scan_name) = value;
+                end
+            end
         end
         
         function file_name = generate_file_name(input_diff, varargin)            
@@ -302,7 +321,7 @@ classdef uedgerun < handle
                 return
             end
             %% Get the full path of the latest file
-            latest_file_path = fullfile(latest_file.folder, latest_file.name);
+            latest_file_path = abspath(latest_file);
         end
     end
     methods
@@ -446,6 +465,7 @@ classdef uedgerun < handle
                 ['rundt_script = "' rundt_script '"'], ...
                 ['runinit_script = "' runinit_script '"'], ...
                 '', ...
+                ['print(f"' disp_prefix 'Start uedge run for: {profile_save}")'], ...
                 'exec(open(rd_in_script).read())', ...
                 ['assert os.path.exists(profile_init), "' disp_prefix 'Init file not found: " + profile_init'], ...
                 'if profile_init == profile_save:', ...
@@ -491,14 +511,17 @@ classdef uedgerun < handle
             delete(file_run)
             delete(self.script_input_diff)
             %% analyze the reason why status != 0
-            reason = '';
-            if status == 0
-                return
-            end
-            
-            if abs(status) == 9 || abs(status) == 128+9
-                reason = 'killed';
-                return
+            switch status
+                case 0
+                    reason = '';
+                case 1
+                    reason = 'stopped';
+                case 2
+                    reason = 'parsing error';
+                case {9, 128+9}
+                    reason = 'killed';
+                otherwise
+                    reason = 'unknown';
             end
         end
         
