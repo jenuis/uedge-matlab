@@ -1,13 +1,12 @@
-function path = abspath(dir_struct)
-    if length(dir_struct) > 1
-        path = {};
-        for i=1:length(dir_struct)
-            path{i} = abspath(dir_struct(i));
-        end
-        return
+function paths = abspath(dir_struct, single_element_output_char)
+    %% check arguments
+    if nargin < 2
+        single_element_output_char = true;
     end
-    
-    assert(isfield(dir_struct, 'folder'), '"dir_struct" has no field "folder"!')
-    assert(isfield(dir_struct, 'name'), '"dir_struct" has no field "name"!')
-    path = fullfile(dir_struct.folder, dir_struct.name);
+    %% call array fun to gen paths
+    paths = arrayfun(@(d) fullfile(d.folder, d.name), dir_struct, 'UniformOutput', false);
+    %% check output
+    if single_element_output_char && length(paths) == 1
+        paths = paths{1};
+    end
 end

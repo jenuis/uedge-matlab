@@ -132,9 +132,7 @@ classdef uedgestat < handle
                 job_file = strrep(profile_file_name, uedgerun.file_extension, '.mat');
                 job_file = fullfile(self.folder, job_file);
                 if exist(job_file, 'file')
-                    mf = matfile(job_file);
-                    job = mf.job;
-                    
+                    job = matread(job_file, 'job');                    
                     fnames = fieldnames(job.input_diff);
                     for i=1:length(fnames)
                         fn = fnames{i};
@@ -759,11 +757,11 @@ classdef uedgestat < handle
         end
         
         function rerun(self)
+            % TODO: rewrite this
+            
             parfor i=1:length(self.files)
                 job_file = self.get_job_file(i);
-                assert(exist(job_file, 'file'), '"job file" not exist!')
-                mf = matfile(job_file);
-                job = mf.job;
+                job = matread(job_file, 'job', 1);
                 
                 file_save = uedgerun.generate_file_name(job.input_diff);
                 file_save = fullfile(self.folder, file_save);

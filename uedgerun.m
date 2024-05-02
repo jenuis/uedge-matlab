@@ -3,6 +3,8 @@
 % Created: 2023-12-15
 % Version: V 0.1.7
 % TODO: Use uedge.rundt.UeRun to replace rdcontdt.py
+%       Refactor: use class instead of constant properties
+
 classdef uedgerun < handle
     properties(Access=private)
         script_run % temp, script will be deleted after calling self.run
@@ -207,6 +209,11 @@ classdef uedgerun < handle
             uedgerun.script_save(input_script, contents);
         end
         
+        function line = input_clean_line(line)
+            line = strsplit(line, '#');
+            line = strip(line{1});
+        end
+        
         function contents = input_modify(input_script, varargin)
             %% check arguments
             input_script = uedgerun.check_existence(input_script, 1);
@@ -226,11 +233,12 @@ classdef uedgerun < handle
                 line = fgetl(fid);
                 contents{end+1} = line;
                 %% check if this line is an input
-                if ~contains(line, '=')
+                line_clean = uedgerun.input_clean_line(line);
+                if ~contains(line_clean, '=')
                     continue
                 end
                 %% get input key
-                arg_name_org = strsplit(line, '=');
+                arg_name_org = strsplit(line_clean, '=');
                 arg_name_org = arg_name_org{1};
                 %% compare and modify input
                 for i=1:(vararg_len/2)
