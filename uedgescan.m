@@ -17,7 +17,8 @@ classdef uedgescan < handle
         script_input
         script_image
         file_init
-        jobinfo = [] % a collection of all job files, used as cache for massive run, where job_get_files consumes significant time
+        jobinfo % a collection of all job files, used as cache for massive 
+                % run, where job_get_files consumes significant time
     end
     
     properties(Access=private)
@@ -113,49 +114,6 @@ classdef uedgescan < handle
             end
         end
         
-        function file_init_disp(work_dir, scan)
-            savedt_files = abspath(...
-                dir( fullfile(work_dir, [uedgerun.file_save_prefix '*.mat']) ),...
-                0);
-            delimiters = {'-'};
-            scan_names = sort(fieldnames(scan));
-            delimiters(2:length(scan_names)+1) = scan_names;
-            for i=1:length(savedt_files)
-                file_save = savedt_files{i};
-                job = matread(file_save, 'job');
-                disp('---------------------------------------------------')
-                if isfield(job, 'file_init_used')
-                    flag_near = true;
-                else
-                    file_init = job.file_init;
-                end
-                [~, file_init_name] = fileparts(file_init);
-                [~, file_save_name] = fileparts(file_save);
-                disp(['Init: ' file_init_name])
-                disp(['Save: ' file_save_name])
-                
-                scan_str = strsplit(file_init_name, '_'); 
-                if length(scan_str) < 2
-                    continue
-                end
-                scan_str = scan_str{2};
-                init_splits = strsplit(scan_str, delimiters);
-                scan_str = strsplit(file_save_name, '_'); scan_str = scan_str{2};
-                save_splits = strsplit(scan_str, delimiters);
-                
-                [vals_init, inds] = setdiff(init_splits, save_splits, 'stable');
-                vals_save = setdiff(save_splits, init_splits, 'stable');
-                for j=1:length(inds)
-                    disp(['Diff: ' delimiters{inds(j)} ...
-                        '(' vals_init{j} ' -> ' vals_save{j} ')']);
-                end
-                
-                if j > 1
-                    fprintf(2, 'Not nearest init is used!\n')
-                end
-            end
-        end
-        
         function result = job_file_check(fpath, raise_error)
             if nargin < 2
                 raise_error = true;
@@ -200,6 +158,11 @@ classdef uedgescan < handle
         end
         
         function job = run_basic(job, varargin)
+            %% job = uedgescan.run_basic(job, 'SkipExist', true, ...
+            %      'ID', [], 'SaveJob', true, ...
+            %      'FailDirName', 'fail', 'Debug', false)
+            % Run a single job task, which does not check job lock.
+            
             %% check arguments
             Args.SkipExist = true;
             Args.ID = [];
@@ -224,11 +187,12 @@ classdef uedgescan < handle
                 work_dir = job.work_dir;
             end
             
-            disp_prefix = [uedgerun.print_prefix ' '];
-            if ~isempty(Args.ID)
-                disp_prefix = ['[' num2str(Args.ID) ']' disp_prefix];
+            if isempty(Args.ID)
+                disp_prefix = [uedgerun.print_prefix ' '];
+            else
+                disp_prefix = [uedgerun.print_prefix '[' num2str(Args.ID) '] '];
             end
-            %% check fail
+            %% skip failed job
             fail_dir = fullfile(work_dir, Args.FailDirName);
             if ~exist(fail_dir, 'dir')
                 mkdir(fail_dir);
@@ -242,9 +206,9 @@ classdef uedgescan < handle
                 disp([disp_prefix 'Skip failed job: ' job_file_fail])
                 return
             end
-            %% check or find the init file
-            job_file_init = '';
+            %% get init file
             if contains(lower(job.file_init), 'near')
+                % find the nearest init file
                 self = matread(['scan_' work_dir '.mat'], 'self');
                 job_file_init = uedgescan.file_init_find_nearest(work_dir, self.scan, job.input_diff);
                 if isempty(job_file_init)
@@ -255,10 +219,11 @@ classdef uedgescan < handle
                 end
                 job.file_init_used = job_file_init;
             else
+                % find the specified init file
                 job_file_init = uedgerun.check_existence({job.file_init, fullfile(work_dir, job.file_init)});
             end
-            %% run job            
-            if isempty(job_file_init) || ~exist(job_file_init, 'file')
+            %% run job
+            if isempty(job_file_init) % specified init file not exist
                 %% omit run
                 job.status = NaN; % no init file
                 job.reason = 'unavailable';
@@ -317,58 +282,6 @@ classdef uedgescan < handle
             disp([disp_prefix 'Converged status: ' upper(run_status)])
         end
         
-        function status = run_job_file(job_file, varargin)
-            %% check if file exist
-            status = '';
-            fpath = abspath(job_file);
-            if ~exist(fpath, 'file')
-                warning(["File not exist: " fpath])
-                return
-            end
-            
-            disp_prefix = [uedgerun.print_prefix ' '];
-            jobs = matread(fpath, 'job');
-            if ~isempty(jobs(1).id)
-                disp_prefix = ['[' num2str(jobs(1).id) ']' disp_prefix];
-            end
-            work_dir = jobs(1).work_dir;
-            %% start diary
-            [~, job_file_name] = fileparts(job_file.name);
-            diary_file = fullfile(job_file.folder, [job_file_name '_log.txt']);
-            diary_file = uedgerun.get_increment_file_name(diary_file);
-            diary(diary_file);
-            diary on
-            disp([disp_prefix 'Created diary file: "' diary_file '"'])
-            %% check if the job is running
-            if uedgescan.run_lock(fpath, 'check')
-                disp([disp_prefix 'Skip running job: "' job_file.name '"!'])
-                status = 'running';
-                return
-            end
-            %% run jobs
-            uedgescan.run_lock(fpath, 'lock');
-            for i=1:length(jobs)
-                if i > 1
-                    disp([disp_prefix '-------------------------------------'])
-                end
-                job_new = uedgescan.run_basic(jobs(i), varargin{:});
-                reason = lower(job_new.reason);
-                if isempty(reason)
-                    continue
-                end
-                
-                if contains(reason, 'kill')
-                    break
-                end
-            end
-            %% delete job file
-            disp([disp_prefix 'Completed: "' fpath '"'])
-            delete(fpath)
-            uedgescan.run_lock(fpath, 'unlock');
-            %% stop diary
-            diary off
-        end
-        
         function status = run_lock(lock_file, mode)
             %% check arguments
             if nargin < 2
@@ -394,6 +307,68 @@ classdef uedgescan < handle
             assert(strcmpi(mode, 'unlock'), 'should be the only left mode!')
             assert(uedgescan.run_lock(lock_file, 'check'), 'lock file should exist!')
             delete(lock_file_new)
+        end
+        
+        function status = run_job_file(fpath_or_dir, varargin)
+            %% status = uedgescan.run_job_file(fpath_or_dir, ...
+            %      'ID', [], 'SaveJob', true, ...
+            %      'FailDirName', 'fail', 'Debug', false)
+            % Run a job file, which may contain several job tasks. 
+            % Locked jobs will be skipped.
+            
+            %% check if job file exists
+            status = '';
+            try
+                fpath = abspath(fpath_or_dir);
+            catch
+                fpath = fpath_or_dir;
+            end
+            if ~exist(fpath, 'file')
+                warning(["File not exist: " fpath])
+                return
+            end
+            
+            [job_file_folder, job_file_name] = fileparts(fpath);
+            disp_prefix = [uedgerun.print_prefix ' '];
+            
+            jobs = matread(fpath, 'job');
+            if ~isempty(jobs(1).id)
+                disp_prefix = ['[' num2str(jobs(1).id) ']' disp_prefix];
+            end
+            %% start diary
+            diary_file = fullfile(job_file_folder, [job_file_name '_log.txt']);
+            diary_file = uedgerun.get_increment_file_name(diary_file);
+            diary(diary_file);
+            diary on
+            disp([disp_prefix 'Created diary file: "' diary_file '"'])
+            %% check if the job is running
+            if uedgescan.run_lock(fpath, 'check')
+                disp([disp_prefix 'Skip running job: "' job_file_name '.mat"!'])
+                status = 'running';
+                return
+            end
+            %% run jobs
+            uedgescan.run_lock(fpath, 'lock');
+            for i=1:length(jobs)
+                if i > 1
+                    disp([disp_prefix '-------------------------------------'])
+                end
+                job_new = uedgescan.run_basic(jobs(i), varargin{:});
+                reason = lower(job_new.reason);
+                if isempty(reason)
+                    continue
+                end
+                
+                if contains(reason, 'kill') % stop running the rest
+                    break
+                end
+            end
+            %% delete job file
+            disp([disp_prefix 'Completed: "' fpath '"'])
+            delete(fpath)
+            uedgescan.run_lock(fpath, 'unlock');
+            %% stop diary
+            diary off
         end
         
         function log_file = log_start(log_file_name, print_prefix)
@@ -763,7 +738,7 @@ classdef uedgescan < handle
             end
         end
         
-        function job = job_struct(self, input_diff, file_init, varargin)
+        function job = job_create(self, input_diff, file_init, varargin)
             %% check arguments
             Args.ScriptImage = self.script_image;
             Args.ScriptInput = self.script_input;
@@ -791,10 +766,17 @@ classdef uedgescan < handle
             self.jobinfo(end).input_diff = job.input_diff;
         end
         
-        function status = job_status(self, input_diff, varargin)
+        function job_file = job_save(self, job)
+            jobid = job.id;
+            job_file = fullfile(self.work_dir, [self.job_file_prefix num2str(jobid) '.mat']);
+            save(job_file, 'job');
+        end
+        
+        function status = job_status(self, job, varargin)
             Args.FailDirName = 'fail';
             Args = parseArgs(varargin, Args);
             
+            input_diff = job.input_diff;
             profile_job_save = uedgerun.generate_file_name(input_diff, 'extension', '.mat');
             profile_job_save = fullfile(self.work_dir, profile_job_save);
             if exist(profile_job_save, 'file')
@@ -810,10 +792,6 @@ classdef uedgescan < handle
             end
             
             status = 'pending';
-        end
-        
-        function job_file = job_name_gen(self, jobid)
-            job_file = fullfile(self.work_dir, [self.job_file_prefix num2str(jobid) '.mat']);
         end
         
         function job_gen_sequential(self, seq_scan_name, seq_start_value, varargin)
@@ -835,10 +813,9 @@ classdef uedgescan < handle
                 disp([disp_prefix 'Finding initial seed closed to "' self.file_init '"'])
                 input_diff_initial = self.scan_find_seed();
                 jobid = 0;
-                job = self.job_struct(input_diff_initial, self.file_init, 'jobid', jobid);
-                job_file = self.job_name_gen(jobid);
-                disp([disp_prefix 'Generating: "' job_file '"'])
-                save(job_file, 'job')
+                job = self.job_create(input_diff_initial, self.file_init, 'jobid', jobid);
+                job_file = self.job_save(job);
+                disp([disp_prefix 'Generated: "' job_file '"'])
             end
             %% initial run
             % Given the sequential scan name and value, the remain scan
@@ -849,10 +826,9 @@ classdef uedgescan < handle
             
             input_diff_list = self.scan_traverse(scan_start);
             for jobid=1:length(input_diff_list)
-                job = self.job_struct(input_diff_list{jobid}, Args.InitialRunFileInit, 'jobid', jobid);
-                job_file = self.job_name_gen(jobid);
-                disp([disp_prefix 'Generating: "' job_file '"'])
-                save(job_file, 'job')
+                job = self.job_create(input_diff_list{jobid}, Args.InitialRunFileInit, 'jobid', jobid);
+                job_file = self.job_save(job);
+                disp([disp_prefix 'Generated: "' job_file '"'])
             end
             %% sequential run
             scan_remain = rmfield(Args.Scan, seq_scan_name);
@@ -884,16 +860,15 @@ classdef uedgescan < handle
                         value = seq_values_tmp(k);
                         input_diff.(seq_scan_name).(self.scan_field_value) = value;
                         
-                        job_tmp = self.job_struct(input_diff, file_init_tmp, 'jobid', jobid);
+                        job_tmp = self.job_create(input_diff, file_init_tmp, 'jobid', jobid);
                         if k==1
                             job = job_tmp;
                         else
                             job(k) = job_tmp;
                         end
                     end
-                    job_file = self.job_name_gen(jobid);
-                    disp([disp_prefix 'Generating: "' job_file '"'])
-                    save(job_file, 'job')
+                    job_file = self.job_save(job);
+                    disp([disp_prefix 'Generated: "' job_file '"'])
                 end
             end
             %% save
@@ -902,7 +877,7 @@ classdef uedgescan < handle
                 
         function job_gen_rerun(self)
             disp_prefix = [uedgerun.print_prefix ' '];
-            savedt_file_list = self.profile_files_get('succeed', ...
+            savedt_file_list = self.savedt_file_get('succeed', ...
                 'fileextension', uedgerun.file_extension);
             savedt_filenames = {savedt_file_list(:).name};
             
@@ -915,10 +890,9 @@ classdef uedgescan < handle
                     continue
                 end           
                                 
-                job = self.job_struct(input_diff, file_init_tmp, 'jobid', jobid);
-                job_file = self.job_name_gen(jobid);
-                disp([disp_prefix 'Generating: "' job_file '"'])
-                save(job_file, 'job')
+                job = self.job_create(input_diff, file_init_tmp, 'jobid', jobid);
+                job_file = self.job_save(job);
+                disp([disp_prefix 'Generated: "' job_file '"'])
             end
         end
         
@@ -1066,7 +1040,7 @@ classdef uedgescan < handle
             end
         end
         
-        function job_update(self)
+        function job_file_update(self)
             disp_prefix = [uedgerun.print_prefix ' '];
             job_files = self.job_file_get();
             for i=1:length(job_files)
@@ -1077,7 +1051,7 @@ classdef uedgescan < handle
                 index_done = [];
                 for j=1:length(jobs)
                     job = jobs(j);
-                    status = self.job_status(job.input_diff);
+                    status = self.job_status(job);
                     if contains(lower(status), 'pending')
                         index_pending(end+1) = j;
                     end
@@ -1094,7 +1068,7 @@ classdef uedgescan < handle
             end
         end
         
-        function file_profiles = profile_files_get(self, status, varargin)
+        function file_profiles = savedt_file_get(self, status, varargin)
             Args.FileExtension = '.mat';
             Args = parseArgs(varargin, Args);
             
@@ -1152,6 +1126,88 @@ classdef uedgescan < handle
             self.log_end();
         end
         
+        function file_init_disp(self, varargin)
+            % TODO: f1e-10 can not be parsed. refactor the code and make
+            % delimter a property and do not use "-"
+            
+            %% check arguments
+            Args.MinDiff = 0;
+            Args = parseArgs(varargin, Args);
+            %% get savedt files
+            savedt_files = abspath(...
+                dir( fullfile(self.work_dir, [uedgerun.file_save_prefix '*.mat']) ),...
+                0);
+            %% get delimiters
+            delimiters = {'-'};
+            scan_names = sort(fieldnames(self.scan));
+            delimiters(2:length(scan_names)+1) = scan_names;
+            %% main
+            for i=1:length(savedt_files)
+                %% get files
+                fsave = savedt_files{i};
+                job = matread(fsave, 'job');
+                lines = {'---------------------------------------------------'};
+                if isfield(job, 'file_init_used')
+                    finit = job.file_init_used;
+                else
+                    finit = job.file_init;
+                end
+                %% disp file names
+                [~, finit_name] = fileparts(finit);
+                [~, fsave_name] = fileparts(fsave);
+                if strcmp(finit_name, fsave_name)
+                    warning(['Itself: ' fsave_name])
+                    continue
+                end
+                lines{end+1} = ['Init: ' finit_name];
+                lines{end+1} = ['Save: ' fsave_name];
+                %% disp differences
+                scan_str = strsplit(finit_name, '_'); 
+                if length(scan_str) < 2
+                    continue
+                end
+                scan_str = scan_str{2};
+                init_splits = strsplit(scan_str, delimiters);
+                scan_str = strsplit(fsave_name, '_'); scan_str = scan_str{2};
+                save_splits = strsplit(scan_str, delimiters);
+                % collect diff
+                if length(init_splits) == length(save_splits)
+                    indbits_diff = cellfun(@(s1, s2) ~strcmp(s1, s2), init_splits, save_splits);
+                    if sum(indbits_diff) < Args.MinDiff
+                        continue
+                    end
+                    
+                    if length(delimiters) == length(indbits_diff)
+                        tmp_deli = delimiters(indbits_diff);
+                    else
+                        tmp_deli = {};
+                        lines{end+1} = 'Diff: can not be parsed!';
+                    end
+                    tmp_init = init_splits(indbits_diff);
+                    tmp_save = save_splits(indbits_diff);
+                    for j=1:length(tmp_deli)
+                        lines{end+1} = ['Diff: ' tmp_deli{j} ...
+                            '(' tmp_init{j} ' -> ' tmp_save{j} ')'];
+                    end
+                else
+                    indbits_diff = 0;
+                    lines{end+1} = 'Diff: can not be parsed!';
+                end
+                % print
+                for j=1:length(lines)
+                    line = lines{j};
+                    if contains(line, 'Diff')
+                        fprintf(2, [line '\n'])
+                    else
+                        disp(line)
+                    end
+                end
+                if sum(indbits_diff) > 1
+                    fprintf(2, 'Not nearest init is used!\n')
+                end
+            end
+        end
+        
         function inspect(self, varargin)
             %% check arguments
             Args.Status = {'successful', 'failed', 'pending'};
@@ -1168,7 +1224,7 @@ classdef uedgescan < handle
                 for j=1:length(job)
                     str_save = uedgerun.input_diff_gen_str(job(j).input_diff);
                     [~, profile_init] = fileparts(job(j).file_init);
-                    status = self.job_status(job(j).input_diff);
+                    status = self.job_status(job(j));
                     if ~isempty(status_filter) && any(contains(lower(status_filter), lower(status(1:4))))
                         if Args.Verbose
                             disp(['"' str_save '" <-- "' profile_init '", "' upper(status) '"'])
@@ -1184,11 +1240,11 @@ classdef uedgescan < handle
             job_list_all = self.scan_traverse(self.scan);
             len_all = length(job_list_all);
             disp(['All cases: ' num2str(len_all)])
-            job_list_succeeded = self.profile_files_get('succeeded', ...
+            job_list_succeeded = self.savedt_file_get('succeeded', ...
                 'fileextension', uedgerun.file_extension);
             len_succeeded = length(job_list_succeeded);
             disp(['Succeded cases: ' num2str(len_succeeded)])
-            job_list_failed = self.profile_files_get('failed', 'fileextension', '.mat');
+            job_list_failed = self.savedt_file_get('failed', 'fileextension', '.mat');
             len_failed = length(job_list_failed);
             disp(['Failed cases: ' num2str(len_failed)])
             disp(['Remain cases: ' num2str(len_all - len_succeeded - len_failed)])

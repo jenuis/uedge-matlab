@@ -434,9 +434,10 @@ classdef uedgerun < handle
             Args.ID = [];
             Args = parseArgs(varargin, Args);
             
-            disp_prefix = [self.print_prefix ' '];
-            if ~isempty(Args.ID)
-                disp_prefix = ['[' num2str(Args.ID) ']' disp_prefix];
+            if isempty(Args.ID)
+                disp_prefix = [uedgerun.print_prefix ' '];
+            else
+                disp_prefix = [uedgerun.print_prefix '[' num2str(Args.ID) '] '];
             end
             %% gen file names
             file_run = self.generate_uuid_file();
