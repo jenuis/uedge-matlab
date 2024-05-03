@@ -17,7 +17,7 @@ classdef uedgescan < handle
         script_input
         script_image
         file_init
-        jobinfo % a collection of all job files, used as cache for massive run, where job_get_files consumes significant time
+        jobinfo = [] % a collection of all job files, used as cache for massive run, where job_get_files consumes significant time
     end
     
     properties(Access=private)
@@ -113,16 +113,19 @@ classdef uedgescan < handle
             end
         end
         
-        function file_init_disp(work_dir)
+        function file_init_disp(work_dir, scan)
             savedt_files = abspath(...
-                dir( fullfile(work_dir, [uedgerun.file_save_prefix '*.mat']) )...
-                );
+                dir( fullfile(work_dir, [uedgerun.file_save_prefix '*.mat']) ),...
+                0);
+            delimiters = {'-'};
+            scan_names = sort(fieldnames(scan));
+            delimiters(2:length(scan_names)+1) = scan_names;
             for i=1:length(savedt_files)
                 file_save = savedt_files{i};
                 job = matread(file_save, 'job');
                 disp('---------------------------------------------------')
                 if isfield(job, 'file_init_used')
-                    file_init = job.file_init_used;
+                    flag_near = true;
                 else
                     file_init = job.file_init;
                 end
@@ -130,6 +133,43 @@ classdef uedgescan < handle
                 [~, file_save_name] = fileparts(file_save);
                 disp(['Init: ' file_init_name])
                 disp(['Save: ' file_save_name])
+                
+                scan_str = strsplit(file_init_name, '_'); 
+                if length(scan_str) < 2
+                    continue
+                end
+                scan_str = scan_str{2};
+                init_splits = strsplit(scan_str, delimiters);
+                scan_str = strsplit(file_save_name, '_'); scan_str = scan_str{2};
+                save_splits = strsplit(scan_str, delimiters);
+                
+                [vals_init, inds] = setdiff(init_splits, save_splits, 'stable');
+                vals_save = setdiff(save_splits, init_splits, 'stable');
+                for j=1:length(inds)
+                    disp(['Diff: ' delimiters{inds(j)} ...
+                        '(' vals_init{j} ' -> ' vals_save{j} ')']);
+                end
+                
+                if j > 1
+                    fprintf(2, 'Not nearest init is used!\n')
+                end
+            end
+        end
+        
+        function result = job_file_check(fpath, raise_error)
+            if nargin < 2
+                raise_error = true;
+            end
+            
+            result = false;
+            try
+                result = exist(fpath, 'file') ==2 && ...
+                    strcmpi(who(matfile(fpath)), 'job');
+            catch
+            end
+            
+            if raise_error && ~result
+                error('Not a valid job file!')
             end
         end
         
@@ -571,16 +611,17 @@ classdef uedgescan < handle
             Args.TaskBackupRatio = 0.2;
             Args = parseArgs(varargin, Args, {'SaveJob', 'SkipExist', 'Debug'});
             
+            num_workers = Args.NumWorkers;
             task_backup_ratio = Args.TaskBackupRatio;
             disp_prefix = [uedgerun.print_prefix ' '];
             %% check if there are any job files
-            job_files = self.job_file_get_available('MaxRequired', Args.NumWorkers);
+            job_files = self.job_file_get_available('MaxRequired', num_workers);
             if isempty(job_files)
                 disp([disp_prefix 'Exit with no jobs!'])
                 return
             end
             %% create parpool
-            pool = self.parpool_create(Args.NumWorkers - 1);
+            pool = self.parpool_create(num_workers - 1);
             Args = rmfield(Args, 'NumWorkers');
             Args = rmfield(Args, 'TaskBackupRatio');
             %% initial run
@@ -595,7 +636,7 @@ classdef uedgescan < handle
                 if self.task_remain(self.tasks) < ...
                         floor(gcp().NumWorkers * (1+task_backup_ratio))
                     diary off
-                    job_files = self.job_file_get_available('MaxRequired', Args.NumWorkers);
+                    job_files = self.job_file_get_available('MaxRequired', num_workers);
                     diary on
                 else
                     job_files = [];
@@ -640,7 +681,6 @@ classdef uedgescan < handle
             Args.ImageScript = '';
             Args = parseArgs(varargin, Args);
             %% set properties
-            self.work_dir = work_dir;
             if ~exist(self.work_dir, 'dir')
                 mkdir(self.work_dir);
             end
@@ -790,6 +830,7 @@ classdef uedgescan < handle
             %% clean
             delete(fullfile(self.work_dir, [self.job_file_prefix '*.mat']))
             %% pre run for using nearest init file
+            self.jobinfo = [];
             if contains(lower(Args.InitialRunFileInit), 'near')
                 disp([disp_prefix 'Finding initial seed closed to "' self.file_init '"'])
                 input_diff_initial = self.scan_find_seed();
@@ -864,6 +905,8 @@ classdef uedgescan < handle
             savedt_file_list = self.profile_files_get('succeed', ...
                 'fileextension', uedgerun.file_extension);
             savedt_filenames = {savedt_file_list(:).name};
+            
+            self.jobinfo = [];
             input_diff_list = self.scan_traverse(self.scan);
             for jobid=1:length(input_diff_list)
                 input_diff = input_diff_list{jobid};
@@ -902,9 +945,10 @@ classdef uedgescan < handle
             %% validate job file
             if length(job_files) < Args.JobCheckMax
                 job_paths = abspath(job_files, 0);
-                inds = cellfun(@(path) exist(path, 'file') ==2 && ...
-                    strcmpi(who(matfile(path)), 'job'), ...
-                    job_paths); % consumes a lot of time when job number is large. set "JobCheckMax" to skip.
+                inds = cellfun(@(path) self.job_file_check(path, 0), ...
+                    job_paths, ... % consumes a lot of time when job number 
+                    'UniformOutput', false); % is large. set "JobCheckMax" to skip.
+                inds = logical([inds{:}]);
                 job_files(~inds) = [];
                 job_paths(~inds) = [];
             else
@@ -1008,15 +1052,18 @@ classdef uedgescan < handle
                     ~isempty(self.file_init_find_nearest(self.work_dir, self.scan, inpdiff)), ...
                     input_diff_list(inds_job_near_part));
                 
-                inds_avail = [inds_avail inds_job_near_part(indbits_inds_job_near_part)];
+                inds_avail = unique([inds_avail inds_job_near_part(indbits_inds_job_near_part)], 'stable');
                 if length(inds_avail) >= Args.MaxRequired
-                    job_files = job_files(inds_avail);
-                    job_files = job_files(1:Args.MaxRequired);
                     break
                 end
             end
             fprintf(1, [disp_prefix 'Enumeration of init files ("nearest"): '])
             toc
+            
+            job_files = job_files(inds_avail);
+            if length(inds_avail) >= Args.MaxRequired
+                job_files = job_files(1:Args.MaxRequired);
+            end
         end
         
         function job_update(self)
