@@ -329,11 +329,12 @@ classdef uedgescan < handle
             end
             
             [job_file_folder, job_file_name] = fileparts(fpath);
-            disp_prefix = [uedgerun.print_prefix ' '];
             
             jobs = matread(fpath, 'job');
             if ~isempty(jobs(1).id)
-                disp_prefix = ['[' num2str(jobs(1).id) ']' disp_prefix];
+                disp_prefix = [uedgerun.print_prefix '[' num2str(jobs(1).id) '] '];
+            else
+                disp_prefix = [uedgerun.print_prefix ' '];
             end
             %% start diary
             diary_file = fullfile(job_file_folder, [job_file_name '_log.txt']);
@@ -411,7 +412,10 @@ classdef uedgescan < handle
             end
         end
         
-        function logfile_new = log_trim(logfile, varargin)
+        function logfile_new = log_trim(logfile_or_folder, varargin)
+            %% logfile_new = log_trim(logfile_or_folder, ...
+            %    'ExtraPrintPrefix', {})
+            
             %% check arguments
             Args.ExtraPrintPrefix = {};
             Args = parseArgs(varargin, Args);
@@ -422,7 +426,18 @@ classdef uedgescan < handle
             
             print_prefix_list = {uedgerun.print_prefix};
             print_prefix_list = [print_prefix_list Args.ExtraPrintPrefix];
-            
+            %% recursive call
+            if exist(logfile_or_folder, 'dir')
+                logfiles = dir(fullfile(logfile_or_folder, [uedgescan.job_file_prefix '*.txt']));
+                for i=1:length(logfiles)
+                    if contains(logfiles(i).name, 'trim')
+                        continue
+                    end
+                    uedgescan.log_trim(abspath(logfiles(i)), varargin{:})
+                end
+                return
+            end
+            logfile = logfile_or_folder;
             assert(exist(logfile, 'file'), 'File not exist!')
             %% check logfile_new
             [path, name, ext] = fileparts(logfile);
