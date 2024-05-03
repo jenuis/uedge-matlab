@@ -20,6 +20,11 @@ classdef uedgescan < handle
         jobinfo % a collection of all job files, used as cache for massive run, where job_get_files consumes significant time
     end
     
+    properties(Access=private)
+        tasks;
+        log_fid_list;
+    end
+    
     methods(Static)
         function input_diff_list = scan_traverse(scan, value_field_name)
             %% check arguments
@@ -126,6 +131,32 @@ classdef uedgescan < handle
                 disp(['Init: ' file_init_name])
                 disp(['Save: ' file_save_name])
             end
+        end
+        
+        function pool = parpool_create(num_workers, print_prefix)
+            if nargin < 2
+                print_prefix = uedgerun.print_prefix;
+            end
+            
+            if isempty(gcp('nocreate'))
+                disp([print_prefix ' Creating parallel pool ...'])
+                try
+                    pool = parpool(num_workers);
+                catch
+                    pool = parpool();
+                end
+            else
+                disp([print_prefix ' Use existing parallel pool!'])
+                pool = gcp;
+            end
+        end
+            
+        function num = task_remain(tasks)
+            num = sum( ...
+                strcmpi({tasks.State}, 'running') | ...
+                strcmpi({tasks.State}, 'pending') | ...
+                strcmpi({tasks.State}, 'queued') ...
+                );
         end
         
         function job = run_basic(job, varargin)
@@ -277,7 +308,9 @@ classdef uedgescan < handle
             %% run jobs
             uedgescan.run_lock(fpath, 'lock');
             for i=1:length(jobs)
-                disp([disp_prefix '-------------------------------------'])
+                if i > 1
+                    disp([disp_prefix '-------------------------------------'])
+                end
                 job_new = uedgescan.run_basic(jobs(i), varargin{:});
                 reason = lower(job_new.reason);
                 if isempty(reason)
@@ -321,6 +354,25 @@ classdef uedgescan < handle
             assert(strcmpi(mode, 'unlock'), 'should be the only left mode!')
             assert(uedgescan.run_lock(lock_file, 'check'), 'lock file should exist!')
             delete(lock_file_new)
+        end
+        
+        function log_file = log_start(log_file_name, print_prefix)
+            if nargin < 2
+                print_prefix = uedgerun.print_prefix;
+            end
+            
+            log_file = uedgerun.get_increment_file_name(log_file_name);
+            diary(log_file)
+            diary on
+            disp([print_prefix ' Start time: ' datestr(now())])
+        end
+        
+        function log_end(print_prefix)
+            if nargin < 1
+                print_prefix = uedgerun.print_prefix;
+            end
+            disp([print_prefix ' End time: ' datestr(now)])
+            diary off
         end
         
         function log_print_new(file_id, varargin)
@@ -379,18 +431,199 @@ classdef uedgescan < handle
         end   
     end
     
-    methods(Access=private)
-        function job_file_init = jobinfo_get_init_profile(self, jobid)
-            job_file_init = '';
-            
-            jobinfo_id = [self.jobinfo(:).id];
-            inds = jobinfo_id == jobid;
-            if sum(inds) == 0
-                return
+    methods(Access=private)                
+        function run_normal(self, varargin)
+            disp_prefix = [uedgerun.print_prefix ' '];
+            while(1)
+                job_files = self.job_file_get_available('MaxRequired', 10);
+                if isempty(job_files)
+                    disp([disp_prefix 'Exit with no jobs!'])
+                    break
+                end
+
+                for i=1:length(job_files)
+                    uedgescan.run_job_file(job_files(i), varargin{:})
+                end
+            end
+        end
+        
+        function job_files = task_trim_job_files(self, job_files, task_backup_ratio)
+            %% check arguments
+            if nargin < 3
+                task_backup_ratio = 0.2;
             end
             
-            job_file_init = {self.jobinfo(inds).file_init};
-            job_file_init = job_file_init{1};
+            if isempty(job_files)
+                return
+            end
+            %% trim tasks according to parpool size
+            num_workers = gcp().NumWorkers;
+            max_num_new_tasks = floor( num_workers*(1+task_backup_ratio) );
+            if isempty(self.tasks)
+                if length(job_files) > max_num_new_tasks
+                    job_files(max_num_new_tasks+1:end) = [];
+                end
+                return
+            end
+            %% check if there are still many backup tasks
+            num_remain_tasks = self.task_remain(self.tasks);
+            if num_remain_tasks > max_num_new_tasks
+                job_files(:) = [];
+                return
+            end
+            %% trim tasks accoring to num of free backup taks
+            num_free_tasks = max_num_new_tasks - num_remain_tasks;
+            if length(job_files) > num_free_tasks
+                job_files(num_free_tasks+1:end) = [];
+            end
+        end
+        
+        function task_enqueue(self, job_files, varargin)
+            %% check arguments
+            if isempty(job_files)
+                return
+            end
+            %% init self.tasks
+            new_task_no = length(job_files);
+            if isempty(self.tasks)
+                self.tasks = parallel.FevalFuture.empty(0, new_task_no);
+                ind_task_tail = 0;
+            else
+                ind_task_tail = length(self.tasks);
+            end
+            %% main
+            disp([uedgerun.print_prefix ...
+                ' Adding tasks (' num2str(new_task_no) ...
+                ') into parallel pool (' ...
+                num2str(self.task_remain(self.tasks)) ' left) ...'])
+            for i = 1:new_task_no
+                %% add task
+                self.tasks(i+ind_task_tail) = parfeval(...
+                    @self.run_job_file, ... % function name
+                    1, ... % num of output parameters
+                    job_files(i), varargin{:}); % fun arguments
+                %% init log file handle
+                self.log_fid_list(i+ind_task_tail) = -1;
+            end
+        end
+        
+        function task_log_open(self, start_time)
+            disp_prefix = [uedgerun.print_prefix ' '];
+            for i=1:length(self.log_fid_list)
+                %% check if the log file has already been opened
+                if self.log_fid_list(i) ~= -1
+                    continue
+                end
+                %% check if the task is running
+                if ~strcmpi(self.tasks(i).State, 'running')
+                    continue
+                end
+                %% get diary file name
+                job_file = self.tasks(i).InputArguments{1};
+                [~, job_file_name] = fileparts(job_file.name);
+
+                pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
+                job_diary = uedgerun.get_latest_file(pattern, start_time);
+                if isempty(job_diary) || ~exist(job_diary, 'file')
+                    disp([disp_prefix 'Diary file currently not exist for "' job_file_name '"!'])
+                    continue
+                end
+                %% open diary
+                fid = fopen(job_diary, 'r');
+                if fid < 0
+                    disp([disp_prefix 'Diary failed to open for "' job_file_name '"!'])
+                    continue
+                end
+
+                disp([disp_prefix 'Diary opened for "' job_file_name '"!'])
+                self.log_fid_list(i) = fid;
+            end
+        end
+        
+        function task_log_collect(self)
+            for i=1:length(self.log_fid_list)
+                fid = self.log_fid_list(i);
+                if fid > 2
+                    self.log_print_new(fid, 'PrintPrefix', uedgerun.print_prefix);
+                end
+            end
+        end
+        
+        function task_log_close(self)
+            for i=1:length(self.log_fid_list)
+                fid = self.log_fid_list(i);
+                if fid > 2
+                    fclose(fid);
+                end
+            end
+        end
+        
+        function run_parallel(self, varargin)
+            %TODO: use onCleanup to detect use quit
+            % uedge instance not closed by cancel(tasks)
+            
+            %% check arguments
+            Args.SkipExist = true;
+            Args.SaveJob = true;
+            Args.FailDirName = 'fail';
+            Args.Debug = false;
+            Args.NumWorkers = maxNumCompThreads;
+            Args.TaskBackupRatio = 0.2;
+            Args = parseArgs(varargin, Args, {'SaveJob', 'SkipExist', 'Debug'});
+            
+            task_backup_ratio = Args.TaskBackupRatio;
+            disp_prefix = [uedgerun.print_prefix ' '];
+            %% check if there are any job files
+            job_files = self.job_file_get_available('MaxRequired', Args.NumWorkers);
+            if isempty(job_files)
+                disp([disp_prefix 'Exit with no jobs!'])
+                return
+            end
+            %% create parpool
+            pool = self.parpool_create(Args.NumWorkers - 1);
+            Args = rmfield(Args, 'NumWorkers');
+            Args = rmfield(Args, 'TaskBackupRatio');
+            %% initial run
+            start_time = now();
+            varargin = struct2vararg(Args);
+            job_files = self.task_trim_job_files(job_files, task_backup_ratio);
+            self.task_enqueue(job_files, varargin{:});
+            %% dispathing
+            state = 'running'; % 'running', 'finished'
+            while(1)
+                %% get new tasks
+                if self.task_remain(self.tasks) < ...
+                        floor(gcp().NumWorkers * (1+task_backup_ratio))
+                    diary off
+                    job_files = self.job_file_get_available('MaxRequired', Args.NumWorkers);
+                    diary on
+                else
+                    job_files = [];
+                end
+                %% check if there are new jobs
+                if isempty(job_files) && strcmpi(state, 'finished')
+                    disp([disp_prefix 'Exit with no jobs!'])
+                    break
+                end
+                %% add new tasks
+                job_files = self.task_trim_job_files(job_files, task_backup_ratio);
+                self.task_enqueue(job_files, varargin{:});
+                %% display task logs
+                if strcmpi(state, 'running')
+                    diary off
+                    self.task_log_open(start_time);
+                    self.task_log_collect();
+                    diary on
+                end
+                %% check if all tasks are finished
+                if all(strcmpi({self.tasks.State}, 'finished'))
+                    state = 'finished';
+                end
+                pause(0.1)
+            end
+            %% clean
+            self.task_log_close();
+            delete(pool)
         end
     end
     
@@ -558,6 +791,7 @@ classdef uedgescan < handle
             delete(fullfile(self.work_dir, [self.job_file_prefix '*.mat']))
             %% pre run for using nearest init file
             if contains(lower(Args.InitialRunFileInit), 'near')
+                disp([disp_prefix 'Finding initial seed closed to "' self.file_init '"'])
                 input_diff_initial = self.scan_find_seed();
                 jobid = 0;
                 job = self.job_struct(input_diff_initial, self.file_init, 'jobid', jobid);
@@ -645,44 +879,42 @@ classdef uedgescan < handle
             end
         end
         
-        function job_files = job_get_files(self, varargin)
-            %% job_files = job_get_files(self, 'ExcludeRunning', false, 'ExcludeNoInitProfile', false)
-            % Excluded cases are used in self.run to avoid constantly adding
-            % tasks that are not ready.
-            % TODO: still too time consuming for massive task. add argument
-            % that max number of job is required
+        function job_files = job_file_get(self, varargin)
+            %% job_files = self.job_file_get('ExcludeRunning', false, 'JobCheckMax', inf)
+            % This func is also a part of dispatching func. Job checking
+            % process is time consuming. Set "JobCheckMax" to skip checking
+            % when the number of job files is large.
             
             %% check arguments
             Args.ExcludeRunning = false;
-            Args.ExcludeNoInitProfile = false;
-            Args.MassiveBoostJobNum = 100;
+            Args.JobCheckMax = inf;
             
-            Args = parseArgs(varargin, Args, {'ExcludeRunning', 'ExcludeNoInitProfile'});
+            Args = parseArgs(varargin, Args, {'ExcludeRunning'});
             disp_prefix = '      '; % not really need to keep for trimming
             is_parallel = ~isempty(gcp('nocreate')); % TODO: cellfun parallel?
+            %% get all job files
             tic
-            %% get all jobs
             job_file_pattern = [self.job_file_prefix, '*.mat'];
             job_files = dir(fullfile(self.work_dir, job_file_pattern));
             if isempty(job_files)
                 return
             end
-            
-            job_paths = [];
-            if length(job_files) < Args.MassiveBoostJobNum
+            %% validate job file
+            if length(job_files) < Args.JobCheckMax
                 job_paths = abspath(job_files, 0);
                 inds = cellfun(@(path) exist(path, 'file') ==2 && ...
                     strcmpi(who(matfile(path)), 'job'), ...
-                    job_paths); % consuming time a lot when job number is large, which blocks dispathing
+                    job_paths); % consumes a lot of time when job number is large. set "JobCheckMax" to skip.
                 job_files(~inds) = [];
                 job_paths(~inds) = [];
             else
-                warning([disp_prefix 'Skipped Job file check for massive run. Make sure no other ""' job_file_pattern '" file inside the work dir.'])
+                job_paths = [];
             end
             fprintf(1, [disp_prefix 'Enumeration of job files: '])
             toc
             %% remove running jobs
             if Args.ExcludeRunning
+                tic
                 if isempty(job_paths)
                     job_paths = abspath(job_files, 0);
                 end
@@ -692,59 +924,104 @@ classdef uedgescan < handle
                     lock_job_paths = cellfun(@(path) path(1:end-5) , abspath(lock_files, 0), ...
                         'UniformOutput', false);
                     
-                    [job_paths, inds] = setdiff(job_paths, lock_job_paths);
+                    [~, inds] = setdiff(job_paths, lock_job_paths);
                     job_files = job_files(inds);
                 end
                 fprintf(1, [disp_prefix 'Enumeration of locked files: '])
                 toc
             end
-            %% remove jobs without init profile
-            if Args.ExcludeNoInitProfile
-                assert(length(self.jobinfo) >= length(job_files), '"self.jobinfo" is corrupted!')
-                %% get jobid by parsing file name                
-                jobid_list_cell = cellfun(...
-                    @(job_name) str2double(regexp(job_name, [uedgescan.job_file_prefix '(\d+)\.mat'], 'tokens', 'once')), ...
-                    {job_files(:).name}, 'UniformOutput', false);
-                jobid_list = [jobid_list_cell{:}];
-                if length(jobid_list) ~= length(jobid_list_cell)
-                    error('Currently does not considering bad job file name, which should not be.')
-                end
-                %% get init files for job_files                
-%                 jobinfo_init_files = cellfun(@self.jobinfo_get_init_profile, ...
-%                 jobid_list_cell, 'UniformOutput', false); % very slow for massive run
-                jobinfo_ids = [self.jobinfo(:).id];
-                [~, inds_map] = ismember(jobid_list, jobinfo_ids); % map self.jobinfo fields to jobid_list
-                init_file_list  = {self.jobinfo(inds_map).file_init};
-                input_diff_list = {self.jobinfo(inds_map).input_diff};
-                %% check if init file exist
-                % bad job file
-                inds_full = 1:length(job_files);
-                inds_near = contains(init_file_list, 'near');
-                inds_save = contains(init_file_list, uedgerun.file_save_prefix);
-                inds_bad = inds_full(~inds_near & ~inds_save);
-                % not exist
-                inds_full_save = inds_full(inds_save);
-                inds_tmp = cellfun(@(fname) exist(fname, 'file') ~= 2, ...
-                    init_file_list(inds_save));
-                inds_bad = [inds_bad inds_full_save(inds_tmp)];
-                fprintf(1, [disp_prefix 'Enumeration of init files ("savedt*hdf5"): '])
-                toc
-                % no nearest init file
-                inds_full_near = inds_full(inds_near);
-                inds_tmp = cellfun(@(inpdiff) ...
-                    isempty(self.file_init_find_nearest(self.work_dir, self.scan, inpdiff)), ...
-                    input_diff_list(inds_near));
-                inds_bad = [inds_bad inds_full_near(inds_tmp)];
-                % remove bad
-                job_files(inds_bad) = [];
-                fprintf(1, [disp_prefix 'Enumeration of init files ("nearest"): '])
-                toc
+        end
+        
+        function job_files = job_file_get_available(self, varargin)
+            %% job_files = self.job_file_available('MaxRequired', inf)
+            % This func is also a part of dispatching func. The init file 
+            % enumerating part is time consuming. "MaxRequired" is used to
+            % boost this process according the task adding need.
+            
+            %% check arguments
+            Args.MaxRequired = inf;
+            Args.SliceLength = 10;
+            Args = parseArgs(varargin, Args, {'ExcludeRunning'});
+            disp_prefix = '      '; 
+            %% get job files
+            job_files = self.job_file_get('ExcludeRunning', 'JobCheckMax', 100);
+            assert(length(self.jobinfo) >= length(job_files), '"self.jobinfo" is corrupted!')
+            %% get jobid by parsing file name                
+            job_file_id_list_cell = cellfun(...
+                @(job_name) str2double(regexp(job_name, [uedgescan.job_file_prefix '(\d+)\.mat'], 'tokens', 'once')), ...
+                {job_files(:).name}, 'UniformOutput', false);
+            job_file_id_list = [job_file_id_list_cell{:}];
+            assert( length(job_file_id_list) == length(job_file_id_list_cell), ...
+                'Currently does not considering bad job file name, which should not be.')
+            %% get init files for job_files
+            jobinfo_id_list = [self.jobinfo(:).id];
+            [~, inds_map] = ismember(job_file_id_list, jobinfo_id_list); % map index from self.jobinfo to job_files
+            file_init_list  = {self.jobinfo(inds_map).file_init};
+            input_diff_list = {self.jobinfo(inds_map).input_diff};
+            %% select job files based on the type of init file
+            inds_bad = ~contains(file_init_list, 'near') & ...
+                ~contains(file_init_list, uedgerun.file_save_prefix);
+            job_files(inds_bad) = [];
+            file_init_list(inds_bad) = [];
+            input_diff_list(inds_bad) = [];
+            inds_job = 1:length(job_files);
+            %% init file is specified as "savedt*hdf5"
+            tic
+            indbits_savedt = contains(file_init_list, uedgerun.file_save_prefix);
+            inds_job_savedt = inds_job(indbits_savedt);
+            
+            indbits_inds_job_savedt = cellfun(@(fname) exist(fname, 'file') == 2, ...
+                file_init_list(indbits_savedt));
+            inds_avail = inds_job_savedt(indbits_inds_job_savedt);
+            
+            fprintf(1, [disp_prefix 'Enumeration of init files ("savedt*hdf5"): '])
+            toc
+            
+            if length(inds_avail) >= Args.MaxRequired
+                job_files = job_files(inds_avail);
+                job_files = job_files(1:Args.MaxRequired);
+                return
             end
+            %% init file is "nearest"
+            tic
+            indbits_near = contains(file_init_list, 'near');
+            inds_job_near = inds_job(indbits_near);
+            
+            slice_no = 1;
+            if length(inds_job_near) > Args.SliceLength
+                slice_no = ceil(length(inds_job_near)/Args.SliceLength);
+            end
+            
+            for i=1:slice_no
+                if slice_no == 1
+                    inds_part = 1:length(inds_job_near);
+                else
+                    if i == slice_no
+                        inds_part = (i-1)*Args.SliceLength:length(inds_job_near);
+                    else
+                        inds_part = (i-1)*Args.SliceLength + (1:Args.SliceLength);
+                    end
+                end
+                
+                inds_job_near_part = inds_job_near(inds_part);
+                indbits_inds_job_near_part = cellfun(@(inpdiff) ...
+                    ~isempty(self.file_init_find_nearest(self.work_dir, self.scan, inpdiff)), ...
+                    input_diff_list(inds_job_near_part));
+                
+                inds_avail = [inds_avail inds_job_near_part(indbits_inds_job_near_part)];
+                if length(inds_avail) >= Args.MaxRequired
+                    job_files = job_files(inds_avail);
+                    job_files = job_files(1:Args.MaxRequired);
+                    break
+                end
+            end
+            fprintf(1, [disp_prefix 'Enumeration of init files ("nearest"): '])
+            toc
         end
         
         function job_update(self)
             disp_prefix = [uedgerun.print_prefix ' '];
-            job_files = self.job_get_files();
+            job_files = self.job_file_get();
             for i=1:length(job_files)
                 job_file = abspath(job_files(i));
                 jobs = matread(job_file, 'job');
@@ -787,180 +1064,45 @@ classdef uedgescan < handle
                     error(['Unknown status: "' status '"'])
             end
         end
-           
+                
         function diary_file = run(self, varargin)
+            %% diary_file = self.run( ...
+            %      'SkipExist', true, ...
+            %      'SaveJob', true, ...
+            %      'FailDirName', 'fail', ...
+            %      'Debug', false, ...
+            %      'UseParallel', true, ...
+            %      'NumWorkers', maxNumCompThreads, ...
+            %      'LogFileName', 'uedgescan_log.txt')
+            
             %% check arguments
             Args.SkipExist = true;
-            Args.ID = [];
             Args.SaveJob = true;
             Args.FailDirName = 'fail';
             Args.Debug = false;
             Args.UseParallel = true;
             Args.NumWorkers = maxNumCompThreads;
             Args.LogFileName = 'uedgescan_log.txt';
-            Args.PauseTime = 0.5;
             Args = parseArgs(varargin, Args, {'SaveJob', 'SkipExist', 'Debug', 'UseParallel'});
             
             use_parallel = Args.UseParallel;
-            num_workers = Args.NumWorkers;
-            log_file_name = Args.LogFileName;
-            pause_time = Args.PauseTime;
-            
+            diary_file = self.log_start(Args.LogFileName);
+            %% parallel run            
             Args = rmfield(Args, 'UseParallel');
-            Args = rmfield(Args, 'NumWorkers');
             Args = rmfield(Args, 'LogFileName');
-            Args = rmfield(Args, 'PauseTime');
             varargin = struct2vararg(Args);
-            disp_prefix = [uedgerun.print_prefix ' '];
-            %% open diary
-            start_time = now();
-            diary_file = uedgerun.get_increment_file_name(log_file_name);
-            diary(diary_file)
-            diary on
-            disp([disp_prefix 'Start time: ' datestr(start_time)])
-            %% normal run
-            if ~use_parallel
-                while(1)
-                    job_files = self.job_get_files('ExcludeRunning', 'ExcludeNoInitProfile');
-                    if isempty(job_files)
-                        disp([disp_prefix 'Exit with no jobs!'])
-                        break
-                    end
-
-                    for i=1:length(job_files)
-                        uedgescan.run_job_file(job_files(i), varargin{:})
-                    end
-                end
+            
+            if use_parallel
+                self.run_parallel(varargin{:})
+                self.log_end();
                 return
             end
-            %% parallel run
-            %TODO: use onCleanup to detect use quit
-            % uedge instance not closed by cancel(tasks)
+            %% normal run
+            Args = rmfield(Args, 'NumWorkers');
+            varargin = struct2vararg(Args);
             
-            %% create parpool
-            if isempty(gcp('nocreate'))
-                disp([disp_prefix 'Creating parallel pool ...'])
-                try
-                    pool = parpool(num_workers);
-                catch
-                    pool = parpool();
-                end
-            else
-                disp([disp_prefix 'Use existing parallel pool!'])
-                pool = gcp;
-            end
-            %% main dispath
-            tasks = [];
-            logfile_handles = [];
-            state = 'init'; % 'init', 'running', 'logging', 'finished'
-            while(1)
-                %% check if there are new jobs
-                diary off
-                job_files = self.job_get_files('ExcludeRunning', 'ExcludeNoInitProfile');
-                diary on
-                task_no = length(job_files);
-                
-                if task_no == 0 && (strcmpi(state, 'init') || strcmpi(state, 'finished'))
-                    disp([disp_prefix 'Exit with no jobs!'])
-                    break
-                end
-                %% create tasks     
-                if task_no > 0                    
-                    flag_create = false;
-                    if strcmpi(state, 'init')
-                        index_task = 0;
-                        tasks = parallel.FevalFuture.empty(0, task_no);
-                        flag_create = true;
-                        disp([disp_prefix 'Creating parallel tasks (NO. is ' num2str(task_no) ') ...'])
-                        state = 'running';
-                    elseif sum( ...
-                            strcmpi({tasks.State}, 'running') | ...
-                            strcmpi({tasks.State}, 'pending') | ...
-                            strcmpi({tasks.State}, 'queued') ...
-                            ) < num_workers
-                        index_task = length(tasks);
-                        flag_create = true;
-                        disp([disp_prefix 'Adding parallel tasks (NO. is ' num2str(task_no) ') ...'])
-                    end
-                    
-                    if flag_create
-                        for i = 1:task_no
-                            % create task
-                            job_file = job_files(i);
-                            tasks(i+index_task) = parfeval(pool, ...
-                                @self.run_job_file, ... % function name
-                                1, ... % num of output parameters
-                                job_file, varargin{:}); % fun arguments
-                            % init log file handle
-                            logfile_handles(i+index_task) = -1;
-                        end
-                    end
-                end
-                %% collect diary
-                if strcmpi(state, 'running')
-                    for i=1:length(logfile_handles)
-                        % normal update log content
-                        file_id = logfile_handles(i);
-                        if file_id > 2
-                            self.log_print_new(file_id, 'PrintPrefix', uedgerun.print_prefix);
-                            continue
-                        end
-                        % check if task is running
-                        if ~strcmpi(tasks(i).State, 'running')
-                            continue
-                        end
-                        % open log file
-                        job_file = tasks(i).InputArguments{1};
-                        [~, job_file_name] = fileparts(job_file.name);
-                        
-                        pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
-                        job_diary = uedgerun.get_latest_file(pattern, start_time);
-                        if isempty(job_diary) || ~exist(job_diary, 'file')
-                            disp([disp_prefix 'Diary file currently not exist for "' job_file_name '"!'])
-                            continue
-                        end
-                        
-                        fh = fopen(job_diary, 'r');
-                        if fh < 0
-                            disp([disp_prefix 'Diary failed to open for "' job_file_name '"!'])
-                            continue
-                        end
-                        
-                        disp([disp_prefix 'Diary opened for "' job_file_name '"!'])
-                        logfile_handles(i) = fh;
-                    end
-                    
-                    if all(strcmpi({tasks.State}, 'finished'))
-                        state = 'logging';
-                    end
-                end
-                %% final logging
-                if strcmpi(state, 'logging')
-                    disp([disp_prefix 'Logging the rest ...'])
-                    for i=1:length(logfile_handles)
-                        file_id = logfile_handles(i);
-                        if file_id > 2
-                            self.log_print_new(file_id, 'PrintPrefix', uedgerun.print_prefix);
-                        end
-                    end
-                    state = 'finished';
-                end
-                %% pause
-                pause(pause_time)
-                diary off
-                disp(['Waiting ' num2str(pause_time) ' second ...'])
-                diary on
-            end
-            %% clean
-            for i=1:length(logfile_handles)
-                file_id = logfile_handles(i);
-                if file_id > 2
-                    fclose(file_id);
-                end
-            end
-            delete(pool)
-            disp([disp_prefix 'End time: ' datestr(now)])
-            diary off
+            self.run_normal(varargin{:});
+            self.log_end();
         end
         
         function inspect(self, varargin)
@@ -971,7 +1113,7 @@ classdef uedgescan < handle
             
             status_filter = Args.Status;
             %% disp job status
-            job_files = self.job_get_files();
+            job_files = self.job_file_get();
             for i=1:length(job_files)
                 f = job_files(i);
                 job = matread(f, 'job');
