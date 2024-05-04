@@ -17,7 +17,7 @@ classdef uedgescan < handle
         scan = struct()
         script_input
         script_image
-        file_init
+        file_init % TODO: use relative path, only file name.
         jobinfo % a collection of all job files, used as cache for massive 
                 % run, where job_get_files consumes significant time
     end
@@ -482,6 +482,30 @@ classdef uedgescan < handle
             end
             diary off
         end   
+        
+        function [scan_para_diff, scan_para_common] = savedt_compare(fpath1, fpath2)
+            [path1, fname1] = fileparts(fpath1);
+            [path2, fname2] = fileparts(fpath2);
+            job_file1 = fullfile(path1, [fname1 '.mat']);
+            job_file2 = fullfile(path2, [fname2 '.mat']);
+            job1 = matread(job_file1, 'job', 1);
+            job2 = matread(job_file2, 'job', 1);
+            input_diff1 = job1.input_diff;
+            input_diff2 = job2.input_diff;
+            scan_names = fieldnames(input_diff1);
+            scan_para_diff = struct([]);
+            scan_para_common = struct([]);
+            for i=1:length(scan_names)
+                scan_name = scan_names{i};
+                val1 = input_diff1.(scan_name).(uedgescan.scan_field_value);
+                val2 = input_diff2.(scan_name).(uedgescan.scan_field_value);
+                if val1 == val2
+                    scan_para_common(1).(scan_name) = val1;
+                else
+                    scan_para_diff(1).(scan_name) = [val1 val2];
+                end
+            end
+        end
     end
     
     methods(Access=private)                
@@ -707,6 +731,25 @@ classdef uedgescan < handle
             %% clean
             self.task_log_close();
             delete(pool)
+        end
+        
+        function [splits1, splits2, indbits_diff] = savedt_diff_by_job(self, fpath1, fpath2, scan_name_sequence)
+            % much more robust than self.savedt_diff_by_name by slow
+            [scan_diff, scan_common] = self.savedt_compare(fpath1, fpath2);
+            for i=1:length(scan_name_sequence)
+                scan_name = scan_name_sequence{i};
+                if isfield(scan_diff, scan_name)
+                    splits1{i} = num2str(scan_diff.(scan_name)(1), [scan_name '%g']);
+                    splits2{i} = num2str(scan_diff.(scan_name)(2), [scan_name '%g']);
+                    indbits_diff(i) = true;
+                    continue
+                end
+                assert(isfield(scan_common, scan_name), ['Unknown scan name "' scan_name '"'])
+                scan_str = num2str(scan_common.(scan_name), [scan_name '%g']);
+                splits1{i} = scan_str;
+                splits2{i} = scan_str;
+                indbits_diff(i) = false;
+            end
         end
     end
     
@@ -1230,13 +1273,13 @@ classdef uedgescan < handle
             self.log_end();
         end
         
-        function file_init_disp(self, varargin)
-            % TODO: f1e-10 can not be parsed. refactor the code and make
-            % delimter a property and do not use "-"
+        function file_init_disp(self, varargin)   
+            %% self.file_init_disp('MinDiff', 0, 'Robust', false)   
             
             %% check arguments
             Args.MinDiff = 0;
-            Args = parseArgs(varargin, Args);
+            Args.Robust = false;
+            Args = parseArgs(varargin, Args, 'Robust');
             %% get savedt files
             savedt_files = abspath(...
                 dir( fullfile(self.work_dir, [uedgerun.file_save_prefix '*.mat']) ),...
@@ -1266,36 +1309,46 @@ classdef uedgescan < handle
                 lines{end+1} = ['Init: ' finit_name];
                 lines{end+1} = ['Save: ' fsave_name];
                 %% disp differences
+                % split input_diff str
                 scan_str = strsplit(finit_name, '_'); 
                 if length(scan_str) < 2
                     continue
                 end
-                scan_str = scan_str{2};
-                init_splits = strsplit(scan_str, delimiters);
-                scan_str = strsplit(fsave_name, '_'); scan_str = scan_str{2};
-                save_splits = strsplit(scan_str, delimiters);
+                if ~Args.Robust
+                    scan_str = scan_str{2};
+                    init_splits = strsplit(scan_str, delimiters);
+                    scan_str = strsplit(fsave_name, '_'); scan_str = scan_str{2};
+                    save_splits = strsplit(scan_str, delimiters);
+                end
                 % collect diff
-                if length(init_splits) == length(save_splits)
+                job_file_init = fullfile(self.work_dir, [finit_name '.mat']);
+                job_file_save = fullfile(self.work_dir, [fsave_name '.mat']);
+                if ~Args.Robust && length(init_splits) == length(save_splits)
                     indbits_diff = cellfun(@(s1, s2) ~strcmp(s1, s2), init_splits, save_splits);
-                    if sum(indbits_diff) < Args.MinDiff
-                        continue
-                    end
-                    
-                    if length(delimiters) == length(indbits_diff)
-                        tmp_deli = delimiters(indbits_diff);
-                    else
-                        tmp_deli = {};
-                        lines{end+1} = 'Diff: can not be parsed!';
-                    end
-                    tmp_init = init_splits(indbits_diff);
-                    tmp_save = save_splits(indbits_diff);
-                    for j=1:length(tmp_deli)
-                        lines{end+1} = ['Diff: ' tmp_deli{j} ...
-                            '(' tmp_init{j} ' -> ' tmp_save{j} ')'];
+                    if length(delimiters) ~= length(indbits_diff)
+                        [init_splits, save_splits, indbits_diff] = ...
+                            self.savedt_diff_by_job(...
+                            job_file_init, ...
+                            job_file_save, ...
+                            scan_names);
                     end
                 else
-                    indbits_diff = 0;
-                    lines{end+1} = 'Diff: can not be parsed!';
+                    [init_splits, save_splits, indbits_diff] = ...
+                        self.savedt_diff_by_job(...
+                        job_file_init, ...
+                        job_file_save, ...
+                        scan_names);
+                end
+                if sum(indbits_diff) < Args.MinDiff
+                    continue
+                end
+                % gen diff line
+                tmp_deli = delimiters([false indbits_diff]);
+                tmp_init = init_splits(indbits_diff);
+                tmp_save = save_splits(indbits_diff);
+                for j=1:length(tmp_deli)
+                    lines{end+1} = ['Diff: ' tmp_deli{j} ...
+                        '(' tmp_init{j} ' -> ' tmp_save{j} ')'];
                 end
                 % print
                 for j=1:length(lines)

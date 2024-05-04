@@ -131,33 +131,13 @@ classdef uedgestat < handle
                 %% parse scan para using job record
                 job_file = strrep(profile_file_name, uedgerun.file_extension, '.mat');
                 job_file = fullfile(self.folder, job_file);
-                if exist(job_file, 'file')
-                    job = matread(job_file, 'job');                    
-                    fnames = fieldnames(job.input_diff);
-                    for i=1:length(fnames)
-                        fn = fnames{i};
-                        para.(fn) = job.input_diff.(fn).(Args.ValueFieldName);
-                    end
-                    return
+                assert( exist(job_file, 'file'), ['Job file missing: ' job_file])
+                job = matread(job_file, 'job');                    
+                fnames = fieldnames(job.input_diff);
+                for i=1:length(fnames)
+                    fn = fnames{i};
+                    para.(fn) = job.input_diff.(fn).(Args.ValueFieldName);
                 end
-                %% parse scan para using file name 
-                parts = strsplit(profile_file_name, self.file_pattern.sep);
-                if any(contains(self.file_pattern.split_remove, 'head'))
-                    parts(1) = [];
-                end
-                if any(contains(self.file_pattern.split_remove, 'tail'))
-                    parts(end) = [];
-                end
-                
-                for j=1:length(parts)
-                    p = parts{j};
-                    var_name = regexp(p, self.file_pattern.reg_pattern, 'match');
-                    var_name = var_name{1};
-                    var_val = p(length(var_name)+1:end);
-                    var_val = str2double(var_val);
-                    para.(var_name) = var_val;
-                end
-                
                 return
             end
             %% parse all files

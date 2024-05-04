@@ -11,7 +11,7 @@ function [attr_value, mf] = matread(fpath_or_dir, attr_name, raise_error)
     end
     
     if ~exist(fpath_or_dir, 'file')
-        warning_or_error('Mat-file not exist!', raise_error)
+        warning_or_error(['Mat-file not exist: "' fpath_or_dir '"!'], raise_error)
         return
     end
     
