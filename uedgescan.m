@@ -2,6 +2,7 @@
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
 % Version: 0.1.18
+% TODO: time out control
 classdef uedgescan < handle   
     properties(Constant)
         scan_field_value = 'value';
@@ -1179,12 +1180,11 @@ classdef uedgescan < handle
             succeded_suffix = ['succe*' Args.FileExtension];
             failed_suffix = ['fail*' Args.FileExtension];
             
-            ur = uedgerun();
             switch lower(status)
                 case {'succeed', 'succeeded', 'successful'}
-                    file_profiles = dir(fullfile(self.work_dir, [ur.file_save_prefix '*' succeded_suffix]));
+                    file_profiles = dir(fullfile(self.work_dir, [uedgerun.file_save_prefix '*' succeded_suffix]));
                 case {'fail', 'failed'}
-                    file_profiles = dir(fullfile(self.work_dir, 'fail', [ur.file_save_prefix '*' failed_suffix]));
+                    file_profiles = dir(fullfile(self.work_dir, 'fail', [uedgerun.file_save_prefix '*' failed_suffix]));
                 otherwise
                     error(['Unknown status: "' status '"'])
             end
@@ -1373,20 +1373,49 @@ classdef uedgescan < handle
             end
         end
         
-        function time = time_stat(self)
-            ur = uedgerun();
-            file_list = dir(fullfile(self.work_dir, [ur.file_save_prefix '*.mat']));
+        function varargout = time_stat(self, varargin)
+            %% time = self.time_stat('TimeRange', [], ...
+            %    'ScanPattern', '*', 'Plot', true, ...
+            %    'Print', true)
+            
+            %% check arguments
+            Args.TimeRange = [0 inf];
+            Args.ScanPattern = '*';
+            Args.Plot = true;
+            Args.Print = true;
+            Args = parseArgs(varargin, Args, {'Plot', 'Print'});
+            %% get elapsed time
+            file_list = dir(...
+                fullfile(self.work_dir, ...
+                [uedgerun.file_save_prefix Args.ScanPattern 'successful.mat']));
             time = zeros(1, length(file_list));
             for i=1:length(file_list)
                 f = file_list(i);
                 job = matread(f, 'job');
                 time(i) = job.elapsed_time;
             end
-            uedgedata.figure;
-            histogram(time/60);
-            xlabel('Elapsed Time [minutes]')
-            ylabel('Counts')
-            uedgedata.figure_decoration;
+            %% slice
+            time = time/60;
+            inds = time < min(Args.TimeRange) | time > max(Args.TimeRange);
+            file_list(inds) = [];
+            time(inds) = [];
+            if nargout == 1
+                varargout = {time};
+            end
+            %% plot
+            if Args.Plot
+                uedgedata.figure;
+                histogram(time);
+                xlabel('Elapsed Time [minutes]')
+                ylabel('Counts')
+                uedgedata.figure_decoration;
+            end
+            %% print
+            for i=1:length(file_list)
+                if time(i) > 60; fid = 2; else; fid = 1; end
+                fprintf(fid, '%s: %.1f minutes\n', ...
+                    uedgerun.extract_input_diff_str(file_list(i).name), time(i));
+            end
         end
     end
 end

@@ -116,33 +116,15 @@ classdef uedgerun < handle
             end
         end
         
-        function scan_para = parse_profile_name(file_name, varargin)
-            % TODO: can not be parsed for f1e-10.
-            % since we have job file, this func can be deprecated
-            
-            warning('Deprecated. Load savedt*.mat for scan value!')
-            
+        function input_diff_str = extract_input_diff_str(file_name, varargin)
             Args.NameDelimiter = '_';
             Args.ScanDelimiter = '-';
-            Args.RegularExpressionPattern = '([a-zA-Z]+)(.*)';
             Args = parseArgs(varargin, Args);
             
             [~, file_name] = fileparts(file_name);
             file_name_splits = strsplit(file_name, Args.NameDelimiter);
             assert(length(file_name_splits) == 3, 'Fail to parse!')
             input_diff_str = file_name_splits{2};
-            
-            input_diff_str_splits = strsplit(input_diff_str, Args.ScanDelimiter);
-            scan_para = struct();
-            for i=1:length(input_diff_str_splits)
-                match = regexp(input_diff_str_splits{i}, Args.RegularExpressionPattern, 'tokens');
-                if ~isempty(match)
-                    value = str2double(match{1}{2});
-                    letters = match{1}{1};
-                    scan_name = letters;
-                    scan_para.(scan_name) = value;
-                end
-            end
         end
         
         function file_name = generate_file_name(input_diff, varargin)            
