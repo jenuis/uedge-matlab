@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
-% Version: V 0.1.17
+% Version: 0.1.18
 classdef uedgescan < handle   
     properties(Constant)
         scan_field_value = 'value';
@@ -61,6 +61,10 @@ classdef uedgescan < handle
         function input_diff_list_disp(input_diff_list, value_field_name)
             if nargin < 2
                 value_field_name = uedgescan.scan_field_value;
+            end
+            
+            if isstruct(input_diff_list)
+                input_diff_list = {input_diff_list};
             end
             
             for i=1:length(input_diff_list)
@@ -136,7 +140,8 @@ classdef uedgescan < handle
                 print_prefix = uedgerun.print_prefix;
             end
             
-            if isempty(gcp('nocreate'))
+            pool = gcp('nocreate');
+            if isempty(pool)
                 disp([print_prefix ' Creating parallel pool ...'])
                 try
                     pool = parpool(num_workers);
@@ -144,8 +149,9 @@ classdef uedgescan < handle
                     pool = parpool();
                 end
             else
-                disp([print_prefix ' Use existing parallel pool!'])
-                pool = gcp;
+                disp([print_prefix ...
+                    ' Using current parallel pool (num of workers: ' ...
+                    num2str(pool.NumWorkers) ') ...'])
             end
         end
             
@@ -372,15 +378,29 @@ classdef uedgescan < handle
             diary off
         end
         
+        function version()
+            getversion({mfilename}, ...
+                'versionkeyword', 'version', ....
+                'printwarning', false, ...
+                'printversion', true, ...
+                'printprefix', [uedgerun.print_prefix '[UEDGE-MATLAB]']);
+        end
+        
         function log_file = log_start(log_file_name, print_prefix)
+            %% check arguments
             if nargin < 2
                 print_prefix = uedgerun.print_prefix;
             end
-            
+            %% create log file and print information
             log_file = uedgerun.get_increment_file_name(log_file_name);
             diary(log_file)
             diary on
+            disp('*******************************************************')
+            uedgescan.version()
+            uedgerun.version()
+            disp('*******************************************************')
             disp([print_prefix ' Start time: ' datestr(now())])
+            disp([print_prefix ' Log file is "' log_file '"'])
         end
         
         function log_end(print_prefix)
@@ -406,9 +426,11 @@ classdef uedgescan < handle
                 if ~isempty(Args.PrintPrefix)
                     contents = strsplit(contents, '\n');
                     contents = contents(contains(contents, Args.PrintPrefix));
-                    contents = strjoin(contents, '\n');
+                    if ~isempty(contents)
+                        contents = strjoin(contents, '\n');
+                        fprintf([contents '\n']);
+                    end
                 end
-                fprintf(contents);
             end
         end
         
@@ -537,7 +559,32 @@ classdef uedgescan < handle
             end
         end
         
-        function task_log_open(self, start_time)
+        function task_remove_finished(self)
+            %% check and print finished tasks
+            inds = [];
+            for i=1:length(self.tasks)
+                if ~strcmpi(self.tasks(i).State, 'finished')
+                    continue
+                end
+                job_file = self.tasks(i).InputArguments{1};
+                [~, job_file_name] = fileparts(job_file.name);
+                disp([uedgerun.print_prefix ' Task finished: "' job_file_name '.mat"!'])
+                fid = self.log_fid_list(i);
+                if fid > 2
+                    fclose(fid);
+                end
+                inds(end+1) = i;
+            end
+            %% remove finished tasks
+            if ~isempty(inds)
+                self.tasks(inds) = [];
+                self.log_fid_list(inds) = [];
+            end
+        end
+        
+        function task_log_open(self, time_newer, varargin)
+            Args.PrintNotExist = true;
+            Args = parseArgs(varargin, Args, {'PrintNotExist'});
             disp_prefix = [uedgerun.print_prefix ' '];
             for i=1:length(self.log_fid_list)
                 %% check if the log file has already been opened
@@ -553,19 +600,21 @@ classdef uedgescan < handle
                 [~, job_file_name] = fileparts(job_file.name);
 
                 pattern = fullfile(job_file.folder, [job_file_name '_log*.txt']);
-                job_diary = uedgerun.get_latest_file(pattern, start_time);
+                job_diary = uedgerun.get_latest_file(pattern, time_newer);
                 if isempty(job_diary) || ~exist(job_diary, 'file')
-                    disp([disp_prefix 'Diary file currently not exist for "' job_file_name '"!'])
+                    if Args.PrintNotExist
+                        disp([disp_prefix 'Diary file currently not exist for "' job_file_name '.mat"!'])
+                    end
                     continue
                 end
                 %% open diary
                 fid = fopen(job_diary, 'r');
                 if fid < 0
-                    disp([disp_prefix 'Diary failed to open for "' job_file_name '"!'])
+                    disp([disp_prefix 'Diary failed to open for "' job_file_name '.mat"!'])
                     continue
                 end
 
-                disp([disp_prefix 'Diary opened for "' job_file_name '"!'])
+                disp([disp_prefix 'Diary opened for "' job_file_name '.mat"!'])
                 self.log_fid_list(i) = fid;
             end
         end
@@ -625,9 +674,9 @@ classdef uedgescan < handle
                 %% get new tasks
                 if self.task_remain(self.tasks) < ...
                         floor(gcp().NumWorkers * (1+task_backup_ratio))
-                    diary off
-                    job_files = self.job_file_get_available('MaxRequired', num_workers);
-                    diary on
+                    job_files = self.job_file_get_available(...
+                        'MaxRequired', num_workers, ...
+                        'PrintPerformance', false);
                 else
                     job_files = [];
                 end
@@ -642,13 +691,15 @@ classdef uedgescan < handle
                 %% display task logs
                 if strcmpi(state, 'running')
                     diary off
-                    self.task_log_open(start_time);
+                    self.task_log_open(start_time, 'PrintNotExist', false);
                     self.task_log_collect();
                     diary on
                 end
                 %% check if all tasks are finished
                 if all(strcmpi({self.tasks.State}, 'finished'))
                     state = 'finished';
+                else
+                    self.task_remove_finished();
                 end
                 pause(0.1)
             end
@@ -889,13 +940,37 @@ classdef uedgescan < handle
             %% save
             self.scan_save()
         end
-                
+        
+        function job_gen_nearest(self)
+            %% clean
+            delete(fullfile(self.work_dir, [self.job_file_prefix '*.mat']))
+            disp_prefix = [uedgerun.print_prefix ' '];
+            %% pre run for using nearest init file
+            self.jobinfo = [];
+            disp([disp_prefix 'Finding initial seed closed to "' self.file_init '"'])
+            input_diff_initial = self.scan_find_seed();
+            jobid = 0;
+            job = self.job_create(input_diff_initial, self.file_init, 'jobid', jobid);
+            job_file = self.job_save(job);
+            disp([disp_prefix 'Generated: "' job_file '"'])
+            %% set all other jobs' init file as "nearest"
+            input_diff_list = self.scan_traverse(self.scan);
+            for jobid=1:length(input_diff_list)
+                job = self.job_create(input_diff_list{jobid}, 'nearest', 'jobid', jobid);
+                job_file = self.job_save(job);
+                disp([disp_prefix 'Generated: "' job_file '"'])
+            end
+            %% save
+            self.scan_save()
+        end
+        
         function job_gen_rerun(self)
+            %% prepare
             disp_prefix = [uedgerun.print_prefix ' '];
             savedt_file_list = self.savedt_file_get('succeed', ...
                 'fileextension', uedgerun.file_extension);
             savedt_filenames = {savedt_file_list(:).name};
-            
+            %% gen job files
             self.jobinfo = [];
             input_diff_list = self.scan_traverse(self.scan);
             for jobid=1:length(input_diff_list)
@@ -909,6 +984,8 @@ classdef uedgescan < handle
                 job_file = self.job_save(job);
                 disp([disp_prefix 'Generated: "' job_file '"'])
             end
+            %% save
+            self.scan_save()
         end
         
         function job_files = job_file_get(self, varargin)
@@ -919,13 +996,14 @@ classdef uedgescan < handle
             
             %% check arguments
             Args.ExcludeRunning = false;
+            Args.PrintPerformance = true;
             Args.JobCheckMax = inf;
             
-            Args = parseArgs(varargin, Args, {'ExcludeRunning'});
+            Args = parseArgs(varargin, Args, {'ExcludeRunning', 'PrintPerformance'});
             disp_prefix = '      '; % not really need to keep for trimming
             is_parallel = ~isempty(gcp('nocreate')); % TODO: cellfun parallel?
             %% get all job files
-            tic
+            if Args.PrintPerformance; tic; end
             job_file_pattern = [self.job_file_prefix, '*.mat'];
             job_files = dir(fullfile(self.work_dir, job_file_pattern));
             if isempty(job_files)
@@ -943,11 +1021,13 @@ classdef uedgescan < handle
             else
                 job_paths = [];
             end
-            fprintf(1, [disp_prefix 'Enumeration of job files: '])
-            toc
+            if Args.PrintPerformance
+                fprintf(1, [disp_prefix 'Enumeration of job files: '])
+                toc
+            end
             %% remove running jobs
             if Args.ExcludeRunning
-                tic
+                if Args.PrintPerformance; tic; end
                 if isempty(job_paths)
                     job_paths = abspath(job_files, 0);
                 end
@@ -960,8 +1040,10 @@ classdef uedgescan < handle
                     [~, inds] = setdiff(job_paths, lock_job_paths);
                     job_files = job_files(inds);
                 end
-                fprintf(1, [disp_prefix 'Enumeration of locked files: '])
-                toc
+                if Args.PrintPerformance
+                    fprintf(1, [disp_prefix 'Enumeration of locked files: '])
+                    toc
+                end
             end
         end
         
@@ -974,10 +1056,13 @@ classdef uedgescan < handle
             %% check arguments
             Args.MaxRequired = inf;
             Args.SliceLength = 10;
-            Args = parseArgs(varargin, Args, {'ExcludeRunning'});
+            Args.PrintPerformance = true;
+            Args = parseArgs(varargin, Args, {'ExcludeRunning', 'PrintPerformance'});
             disp_prefix = '      '; 
             %% get job files
-            job_files = self.job_file_get('ExcludeRunning', 'JobCheckMax', 100);
+            job_files = self.job_file_get('ExcludeRunning', ...
+                'PrintPerformance', Args.PrintPerformance, ...
+                'JobCheckMax', 100);
             assert(length(self.jobinfo) >= length(job_files), '"self.jobinfo" is corrupted!')
             %% get jobid by parsing file name                
             job_file_id_list_cell = cellfun(...
@@ -999,7 +1084,7 @@ classdef uedgescan < handle
             input_diff_list(inds_bad) = [];
             inds_job = 1:length(job_files);
             %% init file is specified as "savedt*hdf5"
-            tic
+            if Args.PrintPerformance; tic; end
             indbits_savedt = contains(file_init_list, uedgerun.file_save_prefix);
             inds_job_savedt = inds_job(indbits_savedt);
             
@@ -1007,8 +1092,10 @@ classdef uedgescan < handle
                 file_init_list(indbits_savedt));
             inds_avail = inds_job_savedt(indbits_inds_job_savedt);
             
-            fprintf(1, [disp_prefix 'Enumeration of init files ("savedt*hdf5"): '])
-            toc
+            if Args.PrintPerformance
+                fprintf(1, [disp_prefix 'Enumeration of init files ("savedt*hdf5"): '])
+                toc
+            end
             
             if length(inds_avail) >= Args.MaxRequired
                 job_files = job_files(inds_avail);
@@ -1016,7 +1103,7 @@ classdef uedgescan < handle
                 return
             end
             %% init file is "nearest"
-            tic
+            if Args.PrintPerformance; tic; end
             indbits_near = contains(file_init_list, 'near');
             inds_job_near = inds_job(indbits_near);
             
@@ -1046,8 +1133,10 @@ classdef uedgescan < handle
                     break
                 end
             end
-            fprintf(1, [disp_prefix 'Enumeration of init files ("nearest"): '])
-            toc
+            if Args.PrintPerformance
+                fprintf(1, [disp_prefix 'Enumeration of init files ("nearest"): '])
+                toc
+            end
             
             job_files = job_files(inds_avail);
             if length(inds_avail) >= Args.MaxRequired
@@ -1269,7 +1358,7 @@ classdef uedgescan < handle
             %% clean run and input files
             uedgerun.clean()
             %% clean not deleted job files
-            self.job_update()
+            self.job_file_update()
             %% clean lock files
             answer = input('Sure to clean job lock files? Please ensure there is no running task! [yes/no]', 's');
             if ~contains(lower(answer), 'y')

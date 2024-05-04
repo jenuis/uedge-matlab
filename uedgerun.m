@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
-% Version: V 0.1.7
+% Version: 0.1.7
 % TODO: Use uedge.rundt.UeRun to replace rdcontdt.py
 %       Refactor: use class instead of constant properties
 
@@ -330,6 +330,14 @@ classdef uedgerun < handle
             end
             %% Get the full path of the latest file
             latest_file_path = abspath(latest_file);
+        end
+        
+        function version()
+            getversion({mfilename}, ...
+                'versionkeyword', 'version', ....
+                'printwarning', false, ...
+                'printversion', true, ...
+                'printprefix', [uedgerun.print_prefix '[UEDGE-MATLAB]']);
         end
     end
     methods
