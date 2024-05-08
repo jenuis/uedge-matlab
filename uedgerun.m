@@ -2,8 +2,9 @@
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
 % Version: 0.1.7
-% TODO: Use uedge.rundt.UeRun to replace rdcontdt.py
-%       Refactor: use class instead of constant properties
+% TODO: 1. Use uedge.rundt.UeRun to replace rdcontdt.py
+%       2. Refactor: use class instead of constant properties
+%       3. Add time out for rdcontdt
 
 classdef uedgerun < handle
     properties(Access=private)

@@ -19,7 +19,11 @@ function version_strs = getversion(varargin)
     for i = 1:length(filenames)
         filename = filenames{i};
         % Find the file on MATLAB's path
-        fullpath = which(filename);
+        try
+            fullpath = which2(filename);
+        catch
+            fullpath = which(filename);
+        end
         if isempty(fullpath)
             if print_warning
                 warning('File %s not found on MATLAB''s path.', filename);

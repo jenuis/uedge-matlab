@@ -1,2 +1,7 @@
 *.asv
 *.p
+UedgeScanRun
+findvalue.m
+haselement.m
+parseArgs.m
+struct2vararg.m

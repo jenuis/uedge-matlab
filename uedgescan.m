@@ -506,6 +506,14 @@ classdef uedgescan < handle
                 end
             end
         end
+        
+        function savedt_files = savedt_find_missing(work_dir)
+            savedt_files = dir(fullfile(work_dir, [uedgerun.file_save_prefix '*' uedgerun.file_extension]));
+            inds = cellfun(@(path) ...
+                exist( strrep(path, uedgerun.file_extension, '.mat'), 'file') ~= 2, ...
+                abspath(savedt_files));
+            savedt_files(~inds) = [];
+        end
     end
     
     methods(Access=private)                
@@ -593,7 +601,10 @@ classdef uedgescan < handle
                 end
                 job_file = self.tasks(i).InputArguments{1};
                 [~, job_file_name] = fileparts(job_file.name);
-                disp([uedgerun.print_prefix ' Task finished: "' job_file_name '.mat"!'])
+                disp([uedgerun.print_prefix ' Task finished: "' job_file_name '.mat"! ' num2str(self.task_remain(self.tasks)) ' tasks left ...'])
+                if ~isempty(self.tasks(i).Error)
+                    warning([uedgerun.print_prefix 'This task returned error: ' self.tasks(i).Error.message])
+                end
                 fid = self.log_fid_list(i);
                 if fid > 2
                     fclose(fid);
