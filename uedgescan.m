@@ -767,6 +767,7 @@ classdef uedgescan < handle
     methods
         function self = uedgescan(work_dir, script_input, file_init, varargin)
             %% check arguments
+            assert(exist(work_dir, 'dir'), ['Woring dir not exist: ' work_dir])
             self.work_dir = work_dir;
             self.scan_load();
             
@@ -1266,6 +1267,8 @@ classdef uedgescan < handle
             
             use_parallel = Args.UseParallel;
             diary_file = self.log_start(Args.LogFileName);
+            disp([uedgerun.print_prefix ' Current dir is "' pwd '"'])
+            disp([uedgerun.print_prefix ' Working on "' self.work_dir '"'])
             %% parallel run            
             Args = rmfield(Args, 'UseParallel');
             Args = rmfield(Args, 'LogFileName');
