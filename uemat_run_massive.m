@@ -6,13 +6,15 @@ function uemat_run_massive(work_dir, cluster_name, num_workers, log_file)
     
     if nargin < 3
         num_workers = maxNumCompThreads - 1;
-        disp([uedgerun.print_prefix ' Using maxNumCompThreads(' num2str(num_workers) ')-1'])
+        disp([uedgerun.print_prefix ' Using maxNumCompThreads(' num2str(maxNumCompThreads) ')-1'])
     else
-        num_workers = str2double(num_workers);
+        if ischar(num_workers)
+            num_workers = str2double(num_workers);
+        end
         num_workers = floor(num_workers);
-        if isnan(num_workers) || num_workers >= maxNumCompThreads
+        if isnan(num_workers)
             num_workers = maxNumCompThreads - 1;
-            disp([uedgerun.print_prefix ' Changing NumWorkers to maxNumCompThreads(' num2str(num_workers) ')-1'])
+            disp([uedgerun.print_prefix ' Changing NumWorkers to maxNumCompThreads(' num2str(maxNumCompThreads) ')-1'])
         end
     end
     
@@ -20,22 +22,10 @@ function uemat_run_massive(work_dir, cluster_name, num_workers, log_file)
         cluster_name = 'local';
     end
     %% open parallel pool
-    cluster = parcluster(cluster_name);
-    cluster.NumWorkers = num_workers;
-    for i=1:10
-        try
-            parpool(cluster, num_workers);
-            break
-        catch ME
-            pause(30)
-            disp([uedgerun.print_prefix ' Failed to start parpool for ' num2str(i) ' times!'])
-            disp(ME.message)
-            if i == 10
-                disp([uedgerun.print_prefix ' Exit with error: no parallel pool!'])
-                return
-            end
-        end
-    end
+    cluster_profile = parcluster(cluster_name);
+    cluster_profile.NumWorkers = num_workers;
+    cluster_profile.NumThreads = 1;
+    parpool(cluster_profile, num_workers);
     %% call uedgescan.run
     usc = uedgescan(work_dir);
     usc.run('LogFileName', log_file);

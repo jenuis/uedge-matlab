@@ -514,6 +514,39 @@ classdef uedgescan < handle
                 abspath(savedt_files));
             savedt_files(~inds) = [];
         end
+        
+        function [fail_files, cache] = savedt_find_fail(fail_init, cache)
+            %% get fail_files
+            if nargin < 2
+                cache.jobid = [];
+                [fail_dir, ~, ext] = fileparts(fail_init);
+                fail_files = dir(fullfile(fail_dir, [uedgerun.file_save_prefix '*' ext]));
+                cache.all_fail_files = fail_files;
+            else
+                fail_files = cache.all_fail_files;
+            end
+            %% get target jobid
+            job = matread(fail_init, 'job');
+            jobid = job.id;
+            %% slice fail_files
+            if nargin < 2
+                inds = false(size(fail_files));
+                for i=1:length(fail_files)
+                    job = matread(abspath(fail_files(i)), 'job');
+                    jobid_tmp = job.id;
+                    cache.jobid(i) = jobid_tmp;
+
+                    if jobid_tmp ~= jobid
+                        continue;
+                    end
+                    inds(i) = true;
+                end
+            else
+                inds = cache.jobid == jobid;
+            end
+
+            fail_files = fail_files(inds);
+        end
     end
     
     methods(Access=private)                
@@ -1285,6 +1318,24 @@ classdef uedgescan < handle
             
             self.run_normal(varargin{:});
             self.log_end();
+        end
+        
+        function fail_files = job_file_fail_gather(self, fail_file_or_dir)
+            %% single file
+            if ischar(fail_file_or_dir)
+                fail_files = self.savedt_find_fail(fail_file_or_dir);
+                return
+            end
+            %% multiple files
+            files = fail_file_or_dir;
+            [fail_files, cache] = self.savedt_find_fail(abspath(files(1)));
+            for i=2:length(files)
+                fail_files_tmp = self.savedt_find_fail(abspath(files(i)), cache);
+                if length(fail_files_tmp) > 1
+                    disp(['Found multiple:' files(i).name])
+                end
+                fail_files(end+1:end+length(fail_files_tmp)) = fail_files_tmp;
+            end
         end
         
         function file_init_disp(self, varargin)   
