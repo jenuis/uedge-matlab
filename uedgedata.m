@@ -76,6 +76,15 @@ classdef uedgedata < handle
             end
         end
         
+        function flag = is_h5(file)
+            try
+                h5info(file);
+                flag = true;
+            catch
+                flag = false;
+            end
+        end
+        
         function flag = is_uedge_file(file_profile)
             try
                 code_name = h5readatt(file_profile, '/bbb', 'code');

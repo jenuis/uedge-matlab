@@ -1,11 +1,10 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-10-11
-% Version: V 0.1.9
+% Version: V 0.1.10
 classdef uedgestat < handle
     properties(Access=protected)
-        folder
-        file_pattern
+        work_dir
         files
     end
 
@@ -31,19 +30,30 @@ classdef uedgestat < handle
             end
             val = s;
         end
+        
+        function para = scan_parse_file(work_dir, profile_file_name, varargin)
+            %% check arguments
+            Args.ValueFieldName = 'value';
+            Args = parseArgs(varargin, Args);
+            
+            para = struct();
+            %% parse scan para using job record
+            job_file = strrep(profile_file_name, uedgerun.file_extension, '.mat');
+            job_file = fullfile(work_dir, job_file);
+            assert( exist(job_file, 'file'), ['Job file missing: ' job_file])
+            job = matread(job_file, 'job');                    
+            fnames = fieldnames(job.input_diff);
+            for i=1:length(fnames)
+                fn = fnames{i};
+                para.(fn) = job.input_diff.(fn).(Args.ValueFieldName);
+            end
+        end
     end
     
     methods
-        function self = uedgestat(folder, file_pattern)
-            if nargin < 2
-                file_pattern.sep = '_';
-                file_pattern.split_remove = {'head', 'tail'};
-                file_pattern.reg_pattern = '^[a-zA-Z]+';
-            end
-            
-            assert(exist(folder, 'dir'), 'input folder does not exist!')
-            self.folder = folder;
-            self.file_pattern = file_pattern;
+        function self = uedgestat(work_dir)            
+            assert(exist(work_dir, 'dir'), '"work_dir" does not exist!')
+            self.work_dir = work_dir;
         end
         
         function files = get_files(self)
@@ -53,22 +63,17 @@ classdef uedgestat < handle
                 return
             end
             %% list files
-            files = dir(self.folder);
+            files = dir(fullfile(self.work_dir, [uedgerun.file_save_prefix '*' uedgerun.file_extension]));
             %% filter files
-            bad_inds = [];
-            for i=1:length(files)
-                f = files(i);
-                if f.isdir
-                    bad_inds(end+1) = i;
-                    continue
-                end
-                file_path = abspath(f);
-                if ~uedgedata.is_uedge_file(file_path)
-                    bad_inds(end+1) = i;
-                    continue
+            if isempty(gcp('nocreate'))
+                inds = cellfun(@(f) uedgedata.is_uedge_file(f), abspath(files));
+            else
+                inds = false(size(files));
+                parfor i=1:length(files)
+                    inds(i) = uedgedata.is_uedge_file(abspath(files(i)));
                 end
             end
-            files(bad_inds) = [];
+            files = files(inds);
             %% set properties
             self.files = files;
         end
@@ -105,7 +110,7 @@ classdef uedgestat < handle
             file_path = [];
             for i=1:length(self.files)
                 file_name = self.files(i).name;
-                para_tmp = self.scan_parse_file(file_name);
+                para_tmp = self.scan_parse_file(self.work_dir, file_name);
                 if isequal(para_tmp, filter)
                     file_path = abspath(self.files(i));
                     return
@@ -122,55 +127,78 @@ classdef uedgestat < handle
             job_file = strrep(file_path, uedgerun.file_extension, '.mat');
         end
         
-        function para = scan_parse_file(self, profile_file_name, varargin)
-            Args.ValueFieldName = 'value';
-            Args = parseArgs(varargin, Args);
-            
-            if nargin > 1
-                para = struct();
-                %% parse scan para using job record
-                job_file = strrep(profile_file_name, uedgerun.file_extension, '.mat');
-                job_file = fullfile(self.folder, job_file);
-                assert( exist(job_file, 'file'), ['Job file missing: ' job_file])
-                job = matread(job_file, 'job');                    
-                fnames = fieldnames(job.input_diff);
-                for i=1:length(fnames)
-                    fn = fnames{i};
-                    para.(fn) = job.input_diff.(fn).(Args.ValueFieldName);
+        function rerun(self, file_index)
+            job_file = self.get_job_file(file_index);
+            job = matread(job_file, 'job');
+            job.file_init = self.get_profile_path(file_index);
+            uedgescan.run_basic(job, ...
+                'SkipExist', false, ...
+                'SaveJob', false, ...
+                'FailDirName', '../');
+        end
+        
+        function image_check(self)
+            %% check if image file is OK
+            savedt_files = self.files;
+            if isempty(gcp('nocreate'))
+                inds = cellfun(@(f) uedgedata.is_h5(...
+                    strrep(f, uedgerun.file_save_prefix, uedgerun.file_image_prefix)), ...
+                    abspath(savedt_files));
+            else
+                inds = false(size(savedt_files));
+                parfor i=1:length(savedt_files)
+                    inds(i) = uedgedata.is_h5(...
+                        strrep(abspath(savedt_files(i)), uedgerun.file_save_prefix, uedgerun.file_image_prefix)...
+                        );
                 end
-                return
             end
-            %% parse all files
-            if ~isempty(self.scan_paras)
-                para = self.scan_paras;
-                return
+            %% repair image file
+            inds_repair = 1:length(savedt_files);
+            inds_repair = inds_repair(~inds);
+            for i=1:length(inds_repair)
+                file_index = inds_repair(i);
+                disp([uedgerun.print_prefix ' Repairing image for: "' savedt_files(file_index).name '"'])
+                self.rerun(file_index);
             end
-            
+        end
+        
+        function scan_parse(self)            
             all_files = self.get_files();
             self.scan_paras = struct();
-            for i=1:length(all_files)
-                file_name = all_files(i).name;
-                para = self.scan_parse_file(file_name);
+            workdir = self.work_dir;
+            %% get paras from savedt job file
+            paras = cell(size(all_files));
+            if isempty(gcp('nocreate'))
+                for i=1:length(all_files)
+                    paras{i} = uedgestat.scan_parse_file(workdir, all_files(i).name);
+                end
+            else
+                parfor i=1:length(all_files)
+                    paras{i} = uedgestat.scan_parse_file(workdir, all_files(i).name);
+                end
+            end
+            %% set self.scan_paras
+            for i=1:length(paras)
+                para = paras{i};
                 fnames = fieldnames(para);
                 for j=1:length(fnames)
                     var_name = fnames{j};
                     self.scan_paras.(var_name)(i) = para.(var_name);
                 end
             end
-            para = self.scan_paras;
         end
-          
+        
         function para_names = scan_get_names(self)
             para_names = fieldnames(self.scan_paras);
         end
               
         function vals = scan_get_values(self, para_name)
-            self.scan_parse_file();
+            self.scan_parse();
             vals = self.scan_paras.(para_name);
         end
         
         function para_vals = scan_get_space(self, para_name)
-            self.scan_parse_file();
+            self.scan_parse();
             
             if nargin < 2
                 para_names = self.scan_get_names();
@@ -364,8 +392,10 @@ classdef uedgestat < handle
             %% parsing files
             disp([disp_prefix 'Enumerating UEDGE files ...'])
             self.get_files();
+            disp([disp_prefix 'Checking image files ...'])
+            self.image_check();
             disp([disp_prefix 'Parsing scanning parameters ...'])
-            self.scan_parse_file();
+            self.scan_parse();
             %% 2D variables
             phy_names = {'nis(1)', 'tes', 'tis', 'ngs', 'tgs'};
             location_names = {'omp', 'li', 'lo'};
@@ -390,21 +420,20 @@ classdef uedgestat < handle
         
         function stat_save(self)
             prop_names = fieldnames(self);
-            prop_names{end+1} = 'folder';
-            prop_names{end+1} = 'file_pattern';
+            prop_names{end+1} = 'work_dir';
             prop_names{end+1} = 'files';
             res = struct();
             for i=1:length(prop_names)
                 p = prop_names{i};
                 res.(p) = self.(p);
             end
-            save(['stat_' self.folder '.mat'], 'res');
+            save(['stat_' self.work_dir '.mat'], 'res');
         end
         
         function is_loaded = stat_load(self)
             is_loaded = false;
             
-            f = ['stat_' self.folder '.mat'];
+            f = ['stat_' self.work_dir '.mat'];
             if ~exist(f, 'file')
                 warning(['"' f '" not exist!'])
                 return
@@ -736,20 +765,5 @@ classdef uedgestat < handle
             c.Label.String = c_label;
         end
         
-        function rerun(self)
-            % TODO: rewrite this
-            
-            parfor i=1:length(self.files)
-                job_file = self.get_job_file(i);
-                job = matread(job_file, 'job', 1);
-                
-                file_save = uedgerun.generate_file_name(job.input_diff);
-                file_save = fullfile(self.folder, file_save);
-                
-                job.file_init = file_save;
-                
-                uedgescan.run_single(job, 'savejob', false);
-            end
-        end
     end
 end
