@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
-% Version: 0.1.18
+% Version: 0.1.19
 % TODO: time out control
 classdef uedgescan < handle   
     properties(Constant)
@@ -513,6 +513,32 @@ classdef uedgescan < handle
                 exist( strrep(path, uedgerun.file_extension, '.mat'), 'file') ~= 2, ...
                 abspath(savedt_files));
             savedt_files(~inds) = [];
+        end
+        
+        function savedt_repair(work_dir, savedt_files)
+            disp('Please make sure that all job files are regenerated!')
+            job_files = dir(fullfile(work_dir, [uedgescan.job_file_prefix '*.mat']));
+            savedt_names = {savedt_files(:).name};
+            for i=1:length(job_files)
+                if isempty(savedt_names)
+                    disp('Exit with empty savedt file.')
+                    return
+                end
+                jobs = matread(abspath(job_files(i)), 'job');
+                for j=1:length(jobs)
+                    job = jobs(j);
+                    savedt_file_tmp = uedgerun.generate_file_name(job.input_diff);
+                    inds = contains(savedt_names, savedt_file_tmp);
+                    if sum(inds) == 0
+                        continue
+                    end
+                    savedt_job_file = strrep(savedt_file_tmp, uedgerun.file_extension, '.mat');
+                    disp(['Repairing "' savedt_job_file '"...'])
+                    save(fullfile(work_dir, savedt_job_file), 'job')
+                    savedt_files(inds) = [];
+                    savedt_names = {savedt_files(:).name};
+                end
+            end
         end
         
         function [fail_files, cache] = savedt_find_fail(fail_init, cache)
@@ -1471,7 +1497,14 @@ classdef uedgescan < handle
             disp(['Failed cases: ' num2str(len_failed)])
             disp(['Remain cases: ' num2str(len_all - len_succeeded - len_failed)])
         end
-             
+        
+        function repair(self)
+            assert(length(self.jobinfo) == length(self.job_file_get()), 'Please regenerate job files!')
+            savedt_files_missing = self.savedt_find_missing(self.work_dir);
+            self.savedt_repair(self.work_dir, savedt_files_missing);
+            disp('You may call self.job_file_update to remove finished jobs.')
+        end
+        
         function clean(self)
             %% clean run and input files
             uedgerun.clean()
