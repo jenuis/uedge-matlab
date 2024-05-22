@@ -59,6 +59,16 @@ classdef uedgescan < handle
             end
         end
         
+        function [combinations, param_names] = param_combiner(varargin)
+            num_params = length(varargin)/2;
+            param_names = varargin(1:2:end);
+            param_values = varargin(2:2:end);
+
+            [param_grids{1:num_params}] = ndgrid(param_values{:});
+
+            combinations = reshape(cell2mat(cellfun(@(x) x(:), param_grids, 'UniformOutput', false)'), [], num_params);
+        end
+        
         function input_diff_list_disp(input_diff_list, value_field_name)
             if nargin < 2
                 value_field_name = uedgescan.scan_field_value;
@@ -880,6 +890,25 @@ classdef uedgescan < handle
             self.scan.(scan_name).(self.scan_field_uedgevar).(self.scan_field_amps) = uedgevar_amps;
             %% save
             self.scan_save();
+        end
+        
+        function [comb, scan_names] = scan_combiner(self, convert2cell)
+            if nargin < 2
+                convert2cell = false;
+            end
+            
+            scan_names = fieldnames(self.scan);
+            varargin = {};
+            for i=1:length(scan_names)
+                name = scan_names{i};
+                varargin {end+1} = name;
+                varargin {end+1} = self.scan.(name).(uedgescan.scan_field_value);
+            end
+            comb = self.param_combiner(varargin{:});
+            
+            if convert2cell
+                comb = mat2cell(comb, ones(1, size(comb, 1)), length(scan_names));
+            end
         end
         
         function input_diff = scan_find_seed(self)

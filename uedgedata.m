@@ -154,6 +154,7 @@ classdef uedgedata < handle
             ylabel('Z [m]')
         end
     end
+    
     methods
         function self = uedgedata(file_profile, file_image)
             %% check argument

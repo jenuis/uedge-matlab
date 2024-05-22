@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-10-11
-% Version: V 0.1.10
+% Version: V 0.1.11
 classdef uedgestat < handle
     properties(Access=protected)
         work_dir
@@ -74,6 +74,10 @@ classdef uedgestat < handle
                 end
             end
             files = files(inds);
+            %% use relative path
+            for i=1:length(files)
+                files(i).folder = self.work_dir;
+            end
             %% set properties
             self.files = files;
         end
@@ -93,6 +97,9 @@ classdef uedgestat < handle
             %% get by file index
             if isnumeric(filter) && filter > 0 && filter <= length(self.files)
                 file_path = abspath(self.files(filter));
+                if ~exist(file_path, 'file')
+                    file_path = fullfile(self.work_dir, self.files(filter).name);
+                end
                 return
             end
             %% get by para, recursive call
@@ -113,6 +120,9 @@ classdef uedgestat < handle
                 para_tmp = self.scan_parse_file(self.work_dir, file_name);
                 if isequal(para_tmp, filter)
                     file_path = abspath(self.files(i));
+                    if ~exist(file_path, 'file')
+                        file_path = fullfile(self.work_dir, file_name);
+                    end
                     return
                 end
             end
@@ -162,7 +172,12 @@ classdef uedgestat < handle
             end
         end
         
-        function scan_parse(self)            
+        function scan_parse(self)
+            %% check
+            if ~isempty(self.scan_paras)
+                return
+            end
+            %% get files
             all_files = self.get_files();
             self.scan_paras = struct();
             workdir = self.work_dir;
@@ -210,6 +225,25 @@ classdef uedgestat < handle
             end
             
             para_vals = unique(self.scan_get_values(para_name));
+        end
+        
+        function comb = scan_paras_combiner(self, scan_names, convert2cell)
+            if nargin < 3
+                convert2cell = false;
+            end
+            if nargin < 2
+                scan_names = fieldnames(self.scan_paras);
+            end
+            
+            num_converge = length(self.scan_paras.(scan_names{1}));
+            comb = zeros(num_converge, length(scan_names));
+            for i=1:num_converge
+                comb(i,:) = cellfun(@(name) self.scan_paras.(name)(i), scan_names);
+            end
+            
+            if convert2cell
+                comb = mat2cell(comb, ones(1, size(comb, 1)), length(scan_names));
+            end
         end
         
         function vals = collect_1d(self, phy_name, poloidal_location)
@@ -691,7 +725,7 @@ classdef uedgestat < handle
                 legend(legend_str)
                 filter_tmp = rmfield(filter_tmp, n);
                 s = self.filter_gen_str(filter_tmp);
-                text(mean(xlim), mean(ylim), s, 'fontsize', font_size)
+                title(strjoin(s,','))
                 return
             end
             %% extract scan para vals
@@ -709,7 +743,7 @@ classdef uedgestat < handle
             
             if Args.PlotFilter
                 s = self.filter_gen_str(filter);
-                text(mean(xlim), mean(ylim), s, 'fontsize', font_size)
+                title(strjoin(s,','))
             end
         end
         
@@ -765,5 +799,105 @@ classdef uedgestat < handle
             c.Label.String = c_label;
         end
         
+        function fig = plot_fail(self, num_paras_max)
+            %% check arguments
+            if nargin < 2
+                num_paras_max = 4;
+            end
+            assert(num_paras_max <= 4, '"num_paras_max" should be less than 5!')
+            %% get fail cases
+            usc = uedgescan(self.work_dir);
+            [all_cases, scan_names] = usc.scan_combiner();
+            converged_cases = self.scan_paras_combiner(scan_names);
+            fail_cases = setdiff(all_cases, converged_cases, 'rows');
+            %% get scan spaces
+            scan_spaces = {};
+            inds_trim = [];
+            for i=1:length(scan_names)
+                scan_spaces{i} = self.scan_get_space(scan_names{i});
+                if length(scan_spaces{i}) == 1
+                    inds_trim(end+1) = i;
+                end
+            end
+            %% trim
+            scan_names_trim = scan_names(inds_trim);
+            scan_names(inds_trim) = [];
+            
+            scan_spaces_trim = scan_spaces(inds_trim);
+            scan_spaces(inds_trim) = [];
+            
+            fail_cases(:,inds_trim) = [];
+            %% sort
+            scan_space_lens = cellfun(@(x) length(x), scan_spaces);
+            [~, inds_sort] = sort(scan_space_lens);
+            
+            scan_names = scan_names(inds_sort);
+            scan_spaces = scan_spaces(inds_sort);
+            fail_cases = fail_cases(:, inds_sort);
+            %% select scan value if length(scan_names) is larger than 4
+            inds_sel = true(size(fail_cases, 1), 1);
+            scan_names_sel_len = length(scan_names) - num_paras_max;
+            for i=1:scan_names_sel_len                
+                scan_space = scan_spaces{i};
+                val_sel = input(['Select value for "' scan_names{i} '":\n' mat2str(scan_space) '\n']);
+                val = scan_space(findvalue(scan_spaces{i}, val_sel));
+                
+                scan_names_trim{end+1} = scan_names{i};
+                scan_spaces_trim{end+1} = val;
+                
+                inds_sel = inds_sel & fail_cases(:,i) == val;
+            end
+            
+            fail_cases = fail_cases(inds_sel, :);
+            
+            scan_names(1:scan_names_sel_len) = [];
+            scan_spaces(1:scan_names_sel_len) = [];
+            fail_cases(:, 1:scan_names_sel_len) = [];
+            %% plot
+            assert(length(scan_names) >= 2, 'The number of the remain scan parameters is less than 2!')
+            marker_size = 8;
+            
+            fig = uedgedata.figure;
+            title_str = {};
+            for i=1:length(scan_names_trim)
+                title_str{i} = num2str(scan_spaces_trim{i}, [scan_names_trim{i} '=%g']);
+            end
+            title_str = strjoin(title_str, ',');
+            
+            X = fail_cases(:, 1);
+            Y = fail_cases(:, 2);
+            if length(scan_names) == 2
+                plot(X, Y, 'o', 'markersize', marker_size, 'markerfacecolor', 'k');
+                title(title_str);
+                xlabel(scan_names{1});
+                ylabel(scan_names{2});
+                uedgedata.figure_decoration;
+                return
+            end
+            
+            Z = fail_cases(:, 3);
+            if length(scan_names) == 3
+                scatter(X, Y, marker_size*10, Z, 'filled', 'markeredgecolor', 'b');
+                title(title_str);
+                xlabel(scan_names{1});
+                ylabel(scan_names{2});
+                ax = colorbar();
+                colormap('hot');
+                xlabel(ax, scan_names{3});
+                uedgedata.figure_decoration;
+                return
+            end
+            
+            C = fail_cases(:, 4);
+            scatter3(X, Y, Z, marker_size*5, C, 'filled');
+            title(title_str);
+            xlabel(scan_names{1});
+            ylabel(scan_names{2});
+            zlabel(scan_names{3});
+            ax = colorbar();
+            colormap('hot');
+            xlabel(ax, scan_names{4});
+            uedgedata.figure_decoration;
+        end
     end
 end
