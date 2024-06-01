@@ -5,3 +5,6 @@ findvalue.m
 haselement.m
 parseArgs.m
 struct2vararg.m
+which2.m
+dimnum.m
+abspath.m
