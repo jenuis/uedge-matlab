@@ -601,12 +601,30 @@ classdef uedgestat < handle
             Args.FontSize = 25;
             Args = parseArgs(varargin, Args, {'UseSubplot'});
             %% get data
-            scan_para_name = self.filter_remain(filter, 1);
-            scan_para_vals = self.scan_get_values(scan_para_name);
+            scan_para_name = self.filter_remain(filter);
+            if isempty(scan_para_name)
+                fnames = fieldnames(filter);
+                filter_multiple = cellfun(@(name) length(filter.(name)) > 1, fnames);
+                assert(sum(filter_multiple) == 1, 'Input filter should have only one parameter that has multiple values!')
+                scan_para_name = char(fnames(filter_multiple));
+                scan_para_vals = self.scan_get_values(scan_para_name);
+                para_vals = filter.(scan_para_name);
+                filter = rmfield(filter, scan_para_name);
+                inds = self.filter_select(filter);
+                inds_bit_sel = false(size(inds));
+                for i=1:length(inds)
+                    inds_bit_sel(i) = ~isempty(find(para_vals == scan_para_vals(inds(i)), 1));
+                end
+                inds = inds(inds_bit_sel);
+            else
+                assert(length(scan_para_name) == 1, ['Input filter should have ' num2str(length(self.scan_get_names())-1) ' fields!'])
+                scan_para_name = scan_para_name{1};
+                scan_para_vals = self.scan_get_values(scan_para_name);
+                inds = self.filter_select(filter);
+            end
             
-            inds = self.filter_select(filter);
-            file_list = self.files(inds);
             para_vals = scan_para_vals(inds);
+            file_list = self.files(inds);
             %% plot using subplot
             fig = uedgedata.figure;
             if Args.UseSubplot
@@ -618,13 +636,11 @@ classdef uedgestat < handle
                     file_path = abspath(f);
                     ud = uedgedata(file_path);
                     ud.plot_1d(phy_name, 'poloidallocationindex', poloidal_location, 'map2omp');
-    %                 xlabel('R-R_{LCFS} [m]')
-    %                 ylabel(phy_name)
                     title([scan_para_name '=' num2str(para_vals(i))])
 
                     if i==1
                         s = self.filter_gen_str(filter);
-                        text(mean(xlim), mean(ylim), s, 'fontsize', Args.FontSize)
+                        title(strjoin(s, ','))
                     end
                 end
                 set(gca, 'fontsize', Args.FontSize)
@@ -644,7 +660,7 @@ classdef uedgestat < handle
             end
             legend(legend_str)
             s = self.filter_gen_str(filter);
-            text(mean(xlim), mean(ylim), s, 'fontsize', Args.FontSize)
+            title(strjoin(s, ','))
             set(gca, 'fontsize', Args.FontSize)
         end
         
