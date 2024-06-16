@@ -327,6 +327,8 @@ classdef uedgerun < handle
         function self = uedgerun(input_script, file_init, varargin)
             %% uedgerun(input_script, file_init, 'ImageScript', '', 'RundtScript', 'rdcontdt.py')
             
+            %% load dependencies 
+            addpath_matutil();
             %% check arguments
             if nargin == 0
                 return

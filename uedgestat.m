@@ -51,7 +51,8 @@ classdef uedgestat < handle
     end
     
     methods
-        function self = uedgestat(work_dir)            
+        function self = uedgestat(work_dir)
+            addpath_mdslab('divlp');            
             assert(exist(work_dir, 'dir'), '"work_dir" does not exist!')
             self.work_dir = work_dir;
         end

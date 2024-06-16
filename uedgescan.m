@@ -835,6 +835,8 @@ classdef uedgescan < handle
     
     methods
         function self = uedgescan(work_dir, script_input, file_init, varargin)
+            %% load dependencies 
+            addpath_matutil();
             %% check arguments
             assert(exist(work_dir, 'dir'), ['Woring dir not exist: ' work_dir])
             self.work_dir = work_dir;

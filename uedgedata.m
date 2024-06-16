@@ -5,10 +5,8 @@
 classdef uedgedata < handle
     properties(Access=private)
         depdencies = {...
-            'parseArgs.m', ...
-            'setfigposition.m', ...
-            'haselement.m', ...
-            'findvalue', ...
+            'repopathctrl.m', ...
+            'addpath_mdslab.m', ...
             }
         
         phy_prefix = 'bbb.'
@@ -157,12 +155,14 @@ classdef uedgedata < handle
     
     methods
         function self = uedgedata(file_profile, file_image)
+            %% load dependencies   
+            self.check_dependency();
+            addpath_mdslab('divlp');
             %% check argument
             if nargin == 0
                 return
             end
-            % check profile            
-            self.check_dependency();
+            % check profile         
             assert(exist(file_profile,'file'), 'Input profile does not exist!')
             assert(self.is_uedge_file(file_profile), 'Input profile is not an UEDGE file!')
             self.file_profile = file_profile;
