@@ -856,7 +856,7 @@ classdef uedgescan < handle
             self.file_init = uedgerun.check_existence(file_init, 1);
             self.script_image = uedgerun.check_existence(Args.ImageScript);
             %% copy files for uedgestat and uedgedata to work
-            copyfile(self.script_input, self.work_dir)
+            copyfile(self.script_input, self.work_dir) % TODO, rename to rd_in.py
             copyfile('mesh.hdf5', self.work_dir)
         end
         
@@ -1125,7 +1125,8 @@ classdef uedgescan < handle
                 if ~any(contains(savedt_filenames, scan_str))
                     continue
                 end           
-                                
+                
+                file_init_tmp = fullfile(self.work_dir, uedgerun.generate_file_name(input_diff));
                 job = self.job_create(input_diff, file_init_tmp, 'jobid', jobid);
                 job_file = self.job_save(job);
                 disp([disp_prefix 'Generated: "' job_file '"'])

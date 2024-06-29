@@ -21,6 +21,11 @@ function uemat_run_massive(work_dir, cluster_name, num_workers, log_file)
     if nargin < 2
         cluster_name = 'local';
     end
+    %% check and close gcp
+    p = gcp('nocreate');
+    if ~isempty(p)
+        delete(p)
+    end
     %% open parallel pool
     cluster_profile = parcluster(cluster_name);
     cluster_profile.NumWorkers = num_workers;

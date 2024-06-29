@@ -357,9 +357,10 @@ classdef uedgestat < handle
                 case 'int'
                     %% Integral value
                     ud = self.get_uedge_data(1);
-                    x = ud.cal_rrsep(poloidal_location);
+                    x = ud.cal_rrsep(poloidal_location, 'RemoveGhost');
                     for i=1:size(vals_1d, 1)
                         y = vals_1d(i,:);
+                        y(ud.get_ghost_inds('radial')) = [];
                         vals(i) = trapz(x, y);
                     end
                 case 'lam'
@@ -379,10 +380,11 @@ classdef uedgestat < handle
                 case 'lamint'
                     %% lambda integral
                     ud = self.get_uedge_data(1);
-                    xdata = ud.cal_rrsep(poloidal_location);
+                    xdata = ud.cal_rrsep(poloidal_location, 'RemoveGhost');
                     xdata = xdata'*1e3; %[m] to [mm]
                     for i=1:size(vals_1d, 1)
                         ydata = vals_1d(i,:);
+                        ydata(ud.get_ghost_inds('radial')) = [];
                         inds = ydata > 0;
                         if sum(inds) < 3
                             ydata = -ydata;
@@ -391,11 +393,7 @@ classdef uedgestat < handle
                         end
                         fit_data.xdata = xdata(inds);
                         fit_data.ydata = ydata(inds);
-                        try
                         vals(i) = prbfit.cal_lambda_int(fit_data, [], 'type', 'raw');
-                        catch
-                            disp('')
-                        end
                     end
             end
             
@@ -600,10 +598,11 @@ classdef uedgestat < handle
             
             Args.UseSubplot = false;
             Args.FontSize = 25;
-            Args = parseArgs(varargin, Args, {'UseSubplot'});
+            Args.RemoveGhost = false;
+            Args = parseArgs(varargin, Args, {'UseSubplot', 'RemoveGhost'});
             %% get data
             scan_para_name = self.filter_remain(filter);
-            if isempty(scan_para_name)
+            if length(scan_para_name) < 1
                 fnames = fieldnames(filter);
                 filter_multiple = cellfun(@(name) length(filter.(name)) > 1, fnames);
                 assert(sum(filter_multiple) == 1, 'Input filter should have only one parameter that has multiple values!')
@@ -613,8 +612,10 @@ classdef uedgestat < handle
                 filter = rmfield(filter, scan_para_name);
                 inds = self.filter_select(filter);
                 inds_bit_sel = false(size(inds));
+                diff_val = min(diff(sort(scan_para_vals(inds))))/2;
                 for i=1:length(inds)
-                    inds_bit_sel(i) = ~isempty(find(para_vals == scan_para_vals(inds(i)), 1));
+                    ind_tmp = findvaluecrit(para_vals, scan_para_vals(inds(i)), diff_val);
+                    inds_bit_sel(i) = ~isnan(ind_tmp);
                 end
                 inds = inds(inds_bit_sel);
             else
@@ -652,9 +653,9 @@ classdef uedgestat < handle
             for i=1:length(file_list)
                 ud = uedgedata(abspath(file_list(i)));
                 if haselement({'jr','jl','qtr','qtl'},lower(phy_name))
-                    ud.plot_1d_target(phy_name, 'map2omp');
+                    ud.plot_1d_target(phy_name, 'map2omp', 'RemoveGhost', Args.RemoveGhost);
                 else
-                    ud.plot_1d_profile(phy_name, poloidal_location, 'map2omp');
+                    ud.plot_1d_profile(phy_name, poloidal_location, 'map2omp', 'RemoveGhost', Args.RemoveGhost);
                 end
                 hold on
                 legend_str{end+1} = [scan_para_name '=' num2str(para_vals(i))];

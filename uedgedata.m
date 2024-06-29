@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-10-11
-% Version: V 0.1.7
+% Version: V 0.1.8
 classdef uedgedata < handle
     properties(Access=private)
         depdencies = {...
@@ -167,9 +167,10 @@ classdef uedgedata < handle
             assert(self.is_uedge_file(file_profile), 'Input profile is not an UEDGE file!')
             self.file_profile = file_profile;
             % set uedgerun instance
-            folder = fileparts(file_profile);
+            [folder, name] = fileparts(file_profile);
+            file_input = [strrep(name, uedgerun.file_save_prefix, 'rd_in') '.py'];
             self.ur = uedgerun(...
-                {fullfile(folder, 'rd_in_new.py'), fullfile(folder, 'rd_in.py')}, ...
+                {file_input, fullfile(folder, 'rd_in_new.py'), fullfile(folder, 'rd_in.py')}, ...
                 file_profile ...
                 );
             % set other propeties
@@ -283,6 +284,21 @@ classdef uedgedata < handle
             self.bdry_ind_radial_end = self.ny + ghost_no_radial;
             self.bdry_ind_poloidal_start = 1 + ghost_no_poloidal;
             self.bdry_ind_poloidal_end = self.nx + ghost_no_poloidal;  
+        end
+        
+        function inds = get_ghost_inds(self, direction)
+            %% poloidal direction
+            if strcmpi(direction, 'x') || ...
+                    strcmpi(direction, 'poloidal')
+                inds = [1:self.bdry_ind_poloidal_start-1 self.bdry_ind_poloidal_end+1:self.grid_no_poloidal];
+                return
+            end
+            %% radial direction
+            if strcmpi(direction, 'y') || ...
+                    strcmpi(direction, 'radial')
+                inds = [1:self.bdry_ind_radial_start-1 self.bdry_ind_radial_end+1:self.grid_no_radial];
+                return
+            end
         end
         
         function set_patch_XY(self)
@@ -723,21 +739,39 @@ classdef uedgedata < handle
             label = ['R-R_{LCFS,' upper(poloidal_location) '} [' Args.XaxisUnit ']'];
         end
         
-        function fit_res = cal_lambda(self, phy_name, varargin)
+        function [fit_res, fit_data] = cal_lambda(self, phy_name, varargin)
+            Args.RemoveGhost = true;
+            Args.PlotResult = true;
+            Args.ZeroBg = 0;
+            Args.MsParallel = 0;
+            Args.MsStartNo = 4;
+            Args.FitBdry = [1000 100 100 50 100; 0 0 0 -50 -100];
+            Args = parseArgs(varargin, Args, {'RemoveGhost', 'PlotResult', 'ZeroBg'});
+            
             assert(haselement({'jr','jl','qtr','qtl'},lower(phy_name)), '"phy_name" should be target particle/heat flux!')
             phy = self.read_physical(phy_name);
             
-            fit_data.xdata = self.cal_rrsep('OMP');
+            fit_data.xdata = self.cal_rrsep('OMP', 'RemoveGhost', Args.RemoveGhost);
             fit_data.ydata = abs(phy.data);
             fit_data.xtype = 'rrsep';
             fit_data.ytype = phy_name;
             
             fit_data.xdata = fit_data.xdata(:)*1e3;
             fit_data.ydata = fit_data.ydata(:);
+            if Args.RemoveGhost
+                fit_data.ydata = fit_data.ydata(self.bdry_ind_radial_start:self.bdry_ind_radial_end);
+            end
             
+            plot_res = Args.PlotResult;
+            Args = rmfield(Args, 'RemoveGhost');
+            Args = rmfield(Args, 'PlotResult');
+            
+            varargin = struct2vararg(Args);
             fit_res = prbfit.eichfit(fit_data, varargin{:});
             
-            prbfit.fitdata_plot(fit_data, fit_res);
+            if plot_res
+                prbfit.fitdata_plot(fit_data, fit_res);
+            end
         end
         
         function fig = plot_1d_common(self, phy, poloidal_location_x, varargin)
@@ -788,6 +822,11 @@ classdef uedgedata < handle
             %% get data
             phy = self.read_physical(phy_name);
             phy.data = self.extract_1d(phy, poloidal_location);
+            if ischar(poloidal_location)
+                phy.name = [phy.name '_{' poloidal_location '}'];
+            else
+                phy.name = [phy.name '_{' num2str(poloidal_location, 'pol-ind=%i') '}'];
+            end
             
             if Args.Map2OMP
                 poloidal_location = 'omp';
@@ -848,6 +887,76 @@ classdef uedgedata < handle
             ylabel([phy.name ' [' phy.unit ']'])
         end
         
+        function fig = view(self, varargin)
+            %% check arguments
+            Args.RemoveGhost = true;
+            Args.Target = {'lo', 'li'};
+            Args.DetachTemperature = 3;
+            Args = parseargs(Args, varargin{:});
+            %% create figure
+            figure;
+            fig = self.figure;
+            setfigposition;
+            
+            row_no = 2;
+            col_no = 4;
+            sub_no = 1;
+            %% 1D OMP
+            subplot(row_no, col_no, sub_no)
+            yyaxis left
+            self.plot_1d_profile('nis(1)', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            yyaxis right
+            self.plot_1d_profile('ngs', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            try
+                textbp(self.file_profile, 'interpreter', 'none')
+            catch
+            end
+            
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            self.plot_1d_profile('tes', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            self.plot_1d_profile('tis', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            ylabel('T_{omp} [eV]')
+            legend('T_e', 'T_i')            
+            %% 1D target
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            yyaxis left
+            self.plot_1d_profile('nis(1)', Args.Target, 'RemoveGhost', Args.RemoveGhost)
+            yyaxis right
+            self.plot_1d_profile('ngs', Args.Target, 'RemoveGhost', Args.RemoveGhost)
+            
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            self.plot_1d_profile('tis', Args.Target, 'RemoveGhost', Args.RemoveGhost)
+            plot(0, Args.DetachTemperature*1.01, 'w')
+            l = getlines(); l = l(1);
+            if all(l.YData <= Args.DetachTemperature)
+                textbp('Detached', 'fontsize', 25, 'color', 'r')
+            end
+            hline(Args.DetachTemperature);
+            vline(0);
+            
+            tag = strrep(lower(Args.Target(end)), 'o', 'r');
+            tag = strrep(tag, 'i', 'l');
+            
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            self.cal_lambda(['j' tag], 'RemoveGhost', Args.RemoveGhost);
+            
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            self.cal_lambda(['qt' tag], 'RemoveGhost', Args.RemoveGhost);
+            %% 2D
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            self.plot_2d('nis(1)');
+            
+            sub_no = sub_no + 1;
+            subplot(row_no, col_no, sub_no)
+            self.plot_2d('tes');
+        end
+        
         function rerun(self)
             %% gen script and run
             self.ur.file_save = self.file_profile;
@@ -855,17 +964,21 @@ classdef uedgedata < handle
             status = self.ur.run();
             assert(status == 0, ['Returned Error for "' self.file_profile '", see above!'])
             %% rename
-            case_dir = fileparts(self.file_profile);
-            file_image_new = fullfile(case_dir, 'images.hdf5');
-            assert(exist(file_image_new, 'file'), 'Image file not generated!')
-            if isempty(self.file_image)
+            file_image_new = strrep(self.file_profile, uedgerun.file_save_prefix, uedgerun.file_image_prefix);
+            if exist(file_image_new, 'file')
                 self.file_image = file_image_new;
-            elseif ~strcmpi(file_image_new, self.file_image)
-                movefile(file_image_new, self.file_image)
+            else
+                case_dir = fileparts(self.file_profile);
+                file_image_new = fullfile(case_dir, 'images.hdf5');
+                assert(exist(file_image_new, 'file'), 'Image file not generated!')
+                if isempty(self.file_image)
+                    self.file_image = file_image_new;
+                elseif ~strcmpi(file_image_new, self.file_image)
+                    movefile(file_image_new, self.file_image)
+                end
             end
             %% clean
             self.ur.file_save = [];
         end
-        
     end
 end
