@@ -16,7 +16,7 @@ if answer.lower() not in ['yes', 'y']:
     sys.exit()
 
 # Define file patterns
-file_patterns = ['uedgerun_', 'uedgeinput_', 'uedgeimage_']
+file_patterns = ['uedgerun_', 'uedgeinput_', 'uedgeimage_', 'dtrun_']
 
 # Loop through file patterns in the current directory
 for pattern in file_patterns:

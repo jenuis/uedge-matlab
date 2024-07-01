@@ -1,15 +1,15 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-15
-% Version: 0.1.7
-% TODO: 1. Use uedge.rundt.UeRun to replace rdcontdt.py
-%       2. Refactor: use class instead of constant properties
-%       3. Add time out for rdcontdt
+% Version: 0.1.8
+% TODO: 1. Refactor: use class instead of constant properties
+%       2. Add time out for rdcontdt
 
 classdef uedgerun < handle
     properties(Access=private)
         script_run % temp, script will be deleted after calling self.run
         script_input_diff % temp, script will be deleted after calling self.run
+        file_save_tmp % temp, used by rundt to store results
         pycmd = 'python3';
     end
     
@@ -24,8 +24,10 @@ classdef uedgerun < handle
     properties
         script_input
         script_image
-        script_rundt
-        script_runinit
+        rundt_max_iter
+        rundt_max_time
+        rundt_min_ftol
+        rundt_min_dt
         
         input_diff = struct();
         
@@ -325,7 +327,8 @@ classdef uedgerun < handle
     end
     methods
         function self = uedgerun(input_script, file_init, varargin)
-            %% uedgerun(input_script, file_init, 'ImageScript', '', 'RundtScript', 'rdcontdt.py')
+            %% uedgerun(input_script, file_init, 'ImageScript', '', 'MaxIteration', 500, 
+            %           'MaxTime', 100, 'MinFtol', 1e-9, 'MinDt', 1e-14)
             
             %% load dependencies 
             addpath_matutil();
@@ -335,16 +338,21 @@ classdef uedgerun < handle
             end
             
             Args.ImageScript = {'image_save_new.py', 'image_save.py', '../image_save_new.py', '../image_save.py'};
-            Args.RundtScript = {'rdcontdt.py', '../rdcontdt.py'};
-            Args.RuninitScript = {'rdinitdt.py', '../rdinitdt.py'};
+            Args.MaxIteration = 500;
+            Args.MaxTime = 100;
+            Args.MinFtol = 1e-9;
+            Args.MinDt  = 1e-14;
             
             Args = parseArgs(varargin, Args);
             %% set properties
             self.script_input = self.check_existence(input_script, 1);
             self.file_init = self.check_existence(file_init, 1);
             self.script_image = self.check_existence(Args.ImageScript);
-            self.script_rundt = self.check_existence(Args.RundtScript, 1);
-            self.script_runinit = self.check_existence(Args.RuninitScript, 1);
+            
+            self.rundt_max_iter = Args.MaxIteration;
+            self.rundt_max_time = Args.MaxTime;
+            self.rundt_min_ftol = Args.MinFtol;
+            self.rundt_min_dt   = Args.MinDt;
         end
         
         function args = input_diff_update(self, scan_name, scan_value, uedgevar_names, uedgevar_amplifications)
@@ -434,6 +442,7 @@ classdef uedgerun < handle
             end
             %% gen file names
             file_run = self.generate_uuid_file();
+            profile_tmp = uedgerun.generate_uuid_file('prefix', 'dtrun', 'extension', '');
             %% collect variables to be write into the script
             profile_init = self.check_existence(self.file_init, 1);
             profile_save = self.file_save;
@@ -442,8 +451,6 @@ classdef uedgerun < handle
             end
             rd_in_script = self.script_input_diff_gen();
             image_script = self.script_image;
-            rundt_script = self.check_existence(self.script_rundt, 1);
-            runinit_script = self.check_existence(self.script_runinit, 1);
             %% modify print prefix in input script
             contents = {};
             fh = fopen(rd_in_script, 'r');
@@ -459,13 +466,17 @@ classdef uedgerun < handle
             %% gen run script content
             contents = {
                 'import os', ...
+                'from uedge.rundt import UeRun', ...
                 '', ...
                 ['profile_init = "' profile_init '"'], ...
                 ['profile_save = "' profile_save '"'], ...
+                ['profile_tmp  = "' profile_tmp '"'], ...
                 ['rd_in_script = "' rd_in_script '"'], ...
                 ['image_script = "' image_script '"'], ...
-                ['rundt_script = "' rundt_script '"'], ...
-                ['runinit_script = "' runinit_script '"'], ...
+                ['ii1max = ' num2str(self.rundt_max_iter)], ...
+                ['t_stop = ' num2str(self.rundt_max_time)], ...
+                ['ftol_min = ' num2str(self.rundt_min_ftol)], ...
+                ['dt_kill = ' num2str(self.rundt_min_dt)], ...
                 '', ...
                 ['print(f"' disp_prefix 'Start uedge run for: {profile_save}")'], ...
                 'exec(open(rd_in_script).read())', ...
@@ -479,11 +490,14 @@ classdef uedgerun < handle
                 'bbb.exmain()', ...
                 ['assert bbb.iterm == 1, "' disp_prefix 'bbb.iterm != 1"'], ...
                 '', ...
-                ['print("' disp_prefix 'Exec: " + rundt_script)'],...
-                'exec(open(runinit_script).read())', ...
-                'exec(open(rundt_script).read())', ...
+                ['print("' disp_prefix 'Call: rundt")'],...
+                'ur = UeRun()', ...
+                'ur.converge(ii1max=ii1max, t_stop=t_stop, ftol_min=ftol_min, dt_kill=dt_kill, savedir=".", savefname=profile_tmp)', ...
+                ['assert hasattr(ur, "fnrm_old"),  "' disp_prefix 'Faild to converge: init step!"'],...
+                ['assert (bbb.dtreal < dt_kill) == False, "' disp_prefix 'Failed to converge: dt_kill!"'],...
+                ['assert (bbb.dt_tot >= t_stop  or  ur.fnrm_old < ftol_min) == True, "' disp_prefix 'Failed to converge: t_stop or fnrm!"'],...
                 ['print("' disp_prefix 'Saving profile ...")'],...
-                'hdf5_save(profile_save)', ...
+                'ur.savesuccess(profile_save)', ...
                 'casedir, _ = os.path.split(profile_save)', ...
                 ''};
             if ~isempty(image_script)
@@ -496,6 +510,7 @@ classdef uedgerun < handle
             %% save script
             self.script_save(file_run, contents)
             self.script_run = file_run;
+            self.file_save_tmp = [profile_tmp '_last_ii2.hdf5'];
         end
         
         function [status, reason] = run(self)
@@ -512,6 +527,9 @@ classdef uedgerun < handle
             %% clean
             delete(file_run)
             delete(self.script_input_diff)
+            if exist(self.file_save_tmp, 'file')
+                delete(self.file_save_tmp)
+            end
             %% analyze the reason why status != 0
             switch status
                 case 0

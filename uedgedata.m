@@ -742,7 +742,7 @@ classdef uedgedata < handle
         function [fit_res, fit_data] = cal_lambda(self, phy_name, varargin)
             Args.RemoveGhost = true;
             Args.PlotResult = true;
-            Args.ZeroBg = 0;
+            Args.ZeroBg = 1;
             Args.MsParallel = 0;
             Args.MsStartNo = 4;
             Args.FitBdry = [1000 100 100 50 100; 0 0 0 -50 -100];
