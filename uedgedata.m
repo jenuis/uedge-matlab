@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-10-11
-% Version: V 0.1.8
+% Version: V 0.1.9
 classdef uedgedata < handle
     properties(Access=private)
         depdencies = {...
@@ -21,7 +21,7 @@ classdef uedgedata < handle
     end
     
     properties
-        file_profile
+        file_savedt
         file_image
         file_mesh = 'mesh.hdf5'
         file_job
@@ -83,11 +83,11 @@ classdef uedgedata < handle
             end
         end
         
-        function flag = is_uedge_file(file_profile)
+        function flag = is_uedge_file(file_savedt)
             try
-                code_name = h5readatt(file_profile, '/bbb', 'code');
+                code_name = h5readatt(file_savedt, '/bbb', 'code');
                 flag = strcmpi(code_name, 'uedge');
-                h5info(file_profile,'/bbb/nis');
+                h5info(file_savedt,'/bbb/nis');
             catch
                 flag = false;
             end
@@ -154,7 +154,7 @@ classdef uedgedata < handle
     end
     
     methods
-        function self = uedgedata(file_profile, file_image)
+        function self = uedgedata(file_savedt, file_image)
             %% load dependencies   
             self.check_dependency();
             addpath_mdslab('divlp');
@@ -162,25 +162,25 @@ classdef uedgedata < handle
             if nargin == 0
                 return
             end
-            % check profile         
-            assert(exist(file_profile,'file'), 'Input profile does not exist!')
-            assert(self.is_uedge_file(file_profile), 'Input profile is not an UEDGE file!')
-            self.file_profile = file_profile;
+            % check input profile         
+            assert(exist(file_savedt,'file'), 'Input profile does not exist!')
+            assert(self.is_uedge_file(file_savedt), 'Input profile is not an UEDGE file!')
+            self.file_savedt = file_savedt;
             % set uedgerun instance
-            [folder, name] = fileparts(file_profile);
+            [folder, name] = fileparts(file_savedt);
             file_input = [strrep(name, uedgerun.file_save_prefix, 'rd_in') '.py'];
             self.ur = uedgerun(...
                 {file_input, fullfile(folder, 'rd_in_new.py'), fullfile(folder, 'rd_in.py')}, ...
-                file_profile ...
+                file_savedt ...
                 );
             % set other propeties
             self.file_mesh = fullfile(folder, [self.ur.file_mesh_prefix, self.ur.file_extension]);
-            self.file_job = self.ur.check_existence(strrep(self.file_profile, self.ur.file_extension, '.mat'));  
-            %% set mesh variables using profile
-            self.nx = double(self.profile_read('com.nx'));
-            self.ny = double(self.profile_read('com.ny'));
-            self.rm = self.profile_read('com.rm');
-            self.zm = self.profile_read('com.zm');
+            self.file_job = self.ur.check_existence(strrep(self.file_savedt, self.ur.file_extension, '.mat'));  
+            %% set mesh variables
+            self.nx = double(self.savedt_read('com.nx'));
+            self.ny = double(self.savedt_read('com.ny'));
+            self.rm = self.savedt_read('com.rm');
+            self.zm = self.savedt_read('com.zm');
             
             self.set_bdry_index();
             self.set_patch_XY();
@@ -210,14 +210,14 @@ classdef uedgedata < handle
             end
             %% load
             var_list = {'geometry', 'rbdry', 'zbdry', 'yylb', 'yyrb', 'zmid', 'psinormc'};
-            file_profile_store = self.file_profile;
-            self.file_profile = mesh_file;
+            file_savedt_store = self.file_savedt;
+            self.file_savedt = mesh_file;
             for i=1:length(var_list)
                 n = var_list{i};
-                v = self.profile_read(['com.' n]);
+                v = self.savedt_read(['com.' n]);
                 self.(n) = v;
             end
-            self.file_profile = file_profile_store;
+            self.file_savedt = file_savedt_store;
             if length(self.geometry) == 1 && iscellstr(self.geometry)
                 self.geometry = strtrim(self.geometry{1});
             end
@@ -243,7 +243,7 @@ classdef uedgedata < handle
             contents = strjoin(contents, '\n');
             self.ur.script_save(self.ur.script_image, contents);
             %% run
-            self.ur.file_save = self.file_profile;
+            self.ur.file_save = self.file_savedt;
             self.ur.script_run_gen();
             self.ur.run();
             %% clean
@@ -259,9 +259,9 @@ classdef uedgedata < handle
                 flag = true;
                 return
             end
-            %% check according to self.file_profile            
-            f_image = strrep(self.file_profile, self.ur.file_save_prefix, self.ur.file_image_prefix);
-            if strcmpi(self.file_profile, f_image)
+            %% check according to self.file_savedt            
+            f_image = strrep(self.file_savedt, self.ur.file_save_prefix, self.ur.file_image_prefix);
+            if strcmpi(self.file_savedt, f_image)
                 return
             end
             
@@ -401,26 +401,26 @@ classdef uedgedata < handle
             self.lcfs_radial_ind = index;
         end
              
-        function info = profile_read_info(self, uri)
+        function info = savedt_read_info(self, uri)
             %% check arguments
             if nargin < 2
                 uri = [];
             end
             %% read and return
             if isempty(uri)
-                info = h5info(self.file_profile);
+                info = h5info(self.file_savedt);
                 return
             end
             
-            info = h5info(self.file_profile, self.check_uri(uri));
+            info = h5info(self.file_savedt, self.check_uri(uri));
         end
         
-        function attr_val = profile_read_attr(self, var_uri, attr_name)
+        function attr_val = savedt_read_attr(self, var_uri, attr_name)
             var_uri = self.check_uri(var_uri);
-            attr_val = h5readatt(self.file_profile, var_uri, attr_name);
+            attr_val = h5readatt(self.file_savedt, var_uri, attr_name);
         end
         
-        function groups = profile_list_groups(self, uri)
+        function groups = savedt_list_groups(self, uri)
             %% check arguments
             groups = {};
             
@@ -428,7 +428,7 @@ classdef uedgedata < handle
                 uri = [];
             end
             %% read info
-            info = self.profile_read_info(uri);
+            info = self.savedt_read_info(uri);
             
             if isempty(info.Groups)
                 return
@@ -436,7 +436,7 @@ classdef uedgedata < handle
             %% recursive call
             this_groups = {info.Groups(:).Name};
             for i=1:length(this_groups)
-                next_groups = self.profile_list_groups(this_groups{i});
+                next_groups = self.savedt_list_groups(this_groups{i});
                 if isempty(next_groups)
                     groups{end+1} = this_groups{i};
                     continue
@@ -445,16 +445,16 @@ classdef uedgedata < handle
             end
         end
         
-        function vars = profile_list_variables(self)
+        function vars = savedt_list_variables(self)
             %% get groups
             vars = {};
-            groups = self.profile_list_groups();
+            groups = self.savedt_list_groups();
             if isempty(groups)
                 return
             end
             %% get variables
             for i=1:length(groups)
-                info = self.profile_read_info(groups{i});
+                info = self.savedt_read_info(groups{i});
                 datasets = info.Datasets;
                 if isempty(datasets)
                     continue
@@ -466,18 +466,18 @@ classdef uedgedata < handle
             end
         end
         
-        function val = profile_read(self, var_uri, varargin)
+        function val = savedt_read(self, var_uri, varargin)
             Args.WarningOff = false;
             Args = parseArgs(varargin, Args, {'WarningOff'});
             
             var_uri = self.check_uri(var_uri);
-            val = h5read(self.file_profile, var_uri);
+            val = h5read(self.file_savedt, var_uri);
             if isnumeric(val)
                 val = self.permute(val, Args.WarningOff);
             end
         end
         
-        function phy = profile_read_physical(self, phy_name, varargin)
+        function phy = savedt_read_physical(self, phy_name, varargin)
             ind = regexp(phy_name, '\(\d+\)', 'once');
             if ~isempty(ind)
                 dim = str2double(phy_name(ind+1));
@@ -487,21 +487,21 @@ classdef uedgedata < handle
             phy_uri = [self.phy_prefix phy_name];
             
             if ~isempty(ind)
-                dims = self.profile_size(phy_name);
+                dims = self.savedt_size(phy_name);
                 assert(length(dims) > 2, ['"' phy_name '" has no third dimension, please remove the index!'])
                 assert(dims(3) >= dim, ['The max index of dim-3 of "' phy_name '" is ' num2str(dims(3)) '!'])
             end
 
-            val = self.profile_read(phy_uri, varargin{:});    
+            val = self.savedt_read(phy_uri, varargin{:});    
             if ~isempty(ind)
                 val = val(:,:,dim);
             end
             
-            phy_unit = self.profile_read_attr(phy_uri, 'units');
+            phy_unit = self.savedt_read_attr(phy_uri, 'units');
             
             if strcmpi(phy_unit, 'j')
                 phy_unit = 'eV';
-                val = val/self.profile_read([self.phy_prefix 'ev']);
+                val = val/self.savedt_read([self.phy_prefix 'ev']);
             end
             
             if strcmpi(phy_unit, 'm^-3')
@@ -518,15 +518,15 @@ classdef uedgedata < handle
             end
         end
         
-        function val = profile_max(self, phy_name)
-            phy = self.profile_read_physical(phy_name);
+        function val = savedt_max(self, phy_name)
+            phy = self.savedt_read_physical(phy_name);
             val = max(phy.data, [], 'all');
         end
         
-        function dims = profile_size(self, phy_name)
+        function dims = savedt_size(self, phy_name)
             dims = [];
             uri = [self.phy_prefix phy_name];
-            info = self.profile_read_info(uri);
+            info = self.savedt_read_info(uri);
             if isempty(info)
                 return
             end
@@ -536,7 +536,7 @@ classdef uedgedata < handle
         end
         
         function info = image_read_info(self)
-            assert(self.image_check(), ['image file does not exist for "' self.file_profile '"'])
+            assert(self.image_check(), ['image file does not exist for "' self.file_savedt '"'])
             info = h5info(self.file_image);
         end
 
@@ -582,16 +582,16 @@ classdef uedgedata < handle
         end
         
         function phy = read_physical(self, phy_name, varargin)
-            %% profile variables
+            %% savedt variables
             phy_name = lower(phy_name);
-            variables = self.profile_list_variables();
+            variables = self.savedt_list_variables();
             phy_name_real = phy_name;
             if contains(phy_name_real, '(')
                 phy_name_real = phy_name_real(1:end-3);
             end
             flag = haselement(lower(variables), self.check_uri([self.phy_prefix phy_name_real]));
             if flag
-                phy = self.profile_read_physical(phy_name, varargin{:});
+                phy = self.savedt_read_physical(phy_name, varargin{:});
                 return
             end
             %% image variables
@@ -610,7 +610,7 @@ classdef uedgedata < handle
             end
             
             [flag, ind] = haselement(lower(variables), phy_name);
-            assert(flag, '"phy_name" is none of a profile and image variables!');
+            assert(flag, '"phy_name" is none of a savedt and image variables!');
             phy_name = variables{ind};
             phy = self.image_read_physical(phy_name);
             
@@ -908,7 +908,7 @@ classdef uedgedata < handle
             yyaxis right
             self.plot_1d_profile('ngs', 'omp', 'RemoveGhost', Args.RemoveGhost)
             try
-                textbp(self.file_profile, 'interpreter', 'none')
+                textbp(self.file_savedt, 'interpreter', 'none')
             catch
             end
             
@@ -959,17 +959,17 @@ classdef uedgedata < handle
         
         function rerun(self)
             %% gen script and run
-            self.ur.file_save = self.file_profile;
+            self.ur.file_save = self.file_savedt;
             self.ur.script_run_gen();
             status = self.ur.run();
-            assert(status == 0, ['Returned Error for "' self.file_profile '", see above!'])
+            assert(status == 0, ['Returned Error for "' self.file_savedt '", see above!'])
             %% rename
-            file_image_new = strrep(self.file_profile, uedgerun.file_save_prefix, uedgerun.file_image_prefix);
+            file_image_new = strrep(self.file_savedt, uedgerun.file_save_prefix, uedgerun.file_image_prefix);
             if exist(file_image_new, 'file')
                 self.file_image = file_image_new;
             else
-                case_dir = fileparts(self.file_profile);
-                file_image_new = fullfile(case_dir, 'images.hdf5');
+                case_dir = fileparts(self.file_savedt);
+                file_image_new = fullfile(case_dir, [uedgerun.file_image_prefix, uedgerun.file_extension]);
                 assert(exist(file_image_new, 'file'), 'Image file not generated!')
                 if isempty(self.file_image)
                     self.file_image = file_image_new;

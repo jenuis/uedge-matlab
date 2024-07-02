@@ -31,14 +31,14 @@ classdef uedgestat < handle
             val = s;
         end
         
-        function para = scan_parse_file(work_dir, profile_file_name, varargin)
+        function para = scan_parse_file(work_dir, file_savedt, varargin)
             %% check arguments
             Args.ValueFieldName = 'value';
             Args = parseArgs(varargin, Args);
             
             para = struct();
             %% parse scan para using job record
-            job_file = strrep(profile_file_name, uedgerun.file_extension, '.mat');
+            job_file = strrep(file_savedt, uedgerun.file_extension, '.mat');
             job_file = fullfile(work_dir, job_file);
             assert( exist(job_file, 'file'), ['Job file missing: ' job_file])
             job = matread(job_file, 'job');                    

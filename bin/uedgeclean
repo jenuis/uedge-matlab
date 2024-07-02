@@ -16,13 +16,18 @@ if answer.lower() not in ['yes', 'y']:
     sys.exit()
 
 # Define file patterns
-file_patterns = ['uedgerun_', 'uedgeinput_', 'uedgeimage_', 'dtrun_']
+file_patterns = [
+    ['uedgerun_', '.py'],
+    ['uedgeinput_', '.py'],
+    ['uedgeimage_', '.py'],
+    ['uedgesave_', '.hdf5'],
+]
 
 # Loop through file patterns in the current directory
 for pattern in file_patterns:
     file_list = os.listdir('.')
     for file in file_list:
-        if file.startswith(pattern) and file.endswith('.py'):
+        if file.startswith(pattern[0]) and file.endswith(pattern[1]):
             f = os.path.abspath(os.path.join('.', file))
             print('Remove: "' + f + '"')
             os.remove(f)
