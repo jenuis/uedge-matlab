@@ -352,6 +352,7 @@ classdef uedgerun < handle
                 'printprefix', [uedgerun.print_prefix '[UEDGE-MATLAB]']);
         end
     end
+    
     methods
         function self = uedgerun(input_script, file_init, varargin)
             %% uedgerun(input_script, file_init, 'ImageScript', '', 'MaxIteration', 500, 
@@ -460,12 +461,22 @@ classdef uedgerun < handle
             end
         end
         
-        function file_input_new = script_input_diff_gen(self)
+        function file_input_new = script_input_gen(self, varargin)
+            %% file_input_new = script_input_gen(self, varargin)
+            
+            %% check argument
+            if nargin > 1
+                assert(mod(length(varargin), 2)==0, 'Input arguments should be "key,value" pair!')
+            end
+            %% process input_diff
             file_input_new = self.generate_uuid_file('prefix', 'uedgeinput');
             args = self.input_diff_update();
             if isempty(args)
                 warning('"input_diff" is empty, input file not being modfied!')
             end
+            %% concatenate varargin
+            args = [args(:); varargin(:)];
+            %% write to file
             contents = self.input_modify(self.script_input, args{:});
             self.script_save(file_input_new, contents);
             self.script_input_diff = file_input_new;
@@ -474,7 +485,9 @@ classdef uedgerun < handle
         function file_run = script_run_gen(self, varargin)
             %% check arguments
             Args.ID = [];
-            Args = parseArgs(varargin, Args);
+            Args.BCIncludeDt = false; % set bbb.isbcwdt
+            Args.Dt = []; % set bbb.dtreal
+            Args = parseArgs(varargin, Args, {'BCIncludeDt'});
             
             if isempty(Args.ID)
                 disp_prefix = [uedgerun.print_prefix ' '];
@@ -490,7 +503,12 @@ classdef uedgerun < handle
             if isempty(profile_save)
                 profile_save = self.generate_file_name(self.input_diff);
             end
-            rd_in_script = self.script_input_diff_gen();
+            args = {};
+            if ~isempty(Args.Dt)
+                args{end+1} = 'bbb.dtreal';
+                args{end+1} = num2str(Args.Dt);
+            end
+            rd_in_script = self.script_input_gen(args{:});
             image_script = self.script_image;
             %% modify print prefix in input script
             contents = {};
@@ -528,6 +546,8 @@ classdef uedgerun < handle
                 'else:',...
                 ['    print("' disp_prefix 'Loading init file: " + profile_init)'], ...
                 'hdf5_restore(profile_init)', ...
+                '', ...
+                ['bbb.isbcwdt = ' num2str(Args.BCIncludeDt)], ...
                 '', ...
                 'bbb.exmain()', ...
                 ['assert bbb.iterm == 1, "' disp_prefix 'Initial step: bbb.iterm != 1"'], ...

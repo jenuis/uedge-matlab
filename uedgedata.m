@@ -957,27 +957,62 @@ classdef uedgedata < handle
             self.plot_2d('tes');
         end
         
-        function rerun(self)
-            %% gen script and run
+        function status = rerun(self)
+            %% check init file
+            file_init_max_time = strrep(self.file_savedt, uedgerun.file_extension, ['_max-iter' uedgerun.file_extension]);
+            if exist(file_init_max_time, 'file') == 2
+                disp([uedgerun.print_prefix ' Restart with "max-iter" file ...'])
+                self.ur.file_init = file_init_max_time;
+            end
+            %% gen script
             self.ur.file_save = self.file_savedt;
             self.ur.script_run_gen();
+            %% run
             status = self.ur.run();
-            assert(status == 0, ['Returned Error for "' self.file_savedt '", see above!'])
-            %% rename
+            %% clean
+            self.ur.file_init = self.file_savedt;
+            self.ur.file_save = [];
+            %% set self.file_image and rename image file
+            if status ~= 0
+                return
+            end
+            % image file named according to savedt file
             file_image_new = strrep(self.file_savedt, uedgerun.file_save_prefix, uedgerun.file_image_prefix);
             if exist(file_image_new, 'file')
                 self.file_image = file_image_new;
-            else
-                case_dir = fileparts(self.file_savedt);
-                file_image_new = fullfile(case_dir, [uedgerun.file_image_prefix, uedgerun.file_extension]);
-                assert(exist(file_image_new, 'file'), 'Image file not generated!')
-                if isempty(self.file_image)
-                    self.file_image = file_image_new;
-                elseif ~strcmpi(file_image_new, self.file_image)
-                    movefile(file_image_new, self.file_image)
-                end
+                return
             end
+            % image file with default name
+            case_dir = fileparts(self.file_savedt);
+            file_image_new = fullfile(case_dir, [uedgerun.file_image_prefix, uedgerun.file_extension]);
+            assert(exist(file_image_new, 'file'), 'Image file not generated!')
+            if isempty(self.file_image)
+                self.file_image = file_image_new;
+                return
+            end
+            % image file has already been specified
+            if ~strcmpi(file_image_new, self.file_image)
+                movefile(file_image_new, self.file_image)
+            end
+        end
+        
+        function status = retry(self)
+            %% set rundt parameter
+            max_time_org = self.ur.rundt_max_time;
+            self.ur.rundt_max_time = 1e-7;
+            %% gen script
+            file_retry = strrep(self.file_savedt, uedgerun.file_extension, ['_retry' uedgerun.file_extension]);
+            self.ur.file_save = file_retry;
+            self.ur.script_run_gen('BCIncludeDt', 'Dt', 1e-10);
+            %% run
+            status = self.ur.run();
+            assert(status == 103, 'Should return "max time reached!"')
+            %% cal rerun
+            self.ur.rundt_max_time = max_time_org;
+            self.ur.file_init = strrep(file_retry, uedgerun.file_extension, ['_max-time' uedgerun.file_extension]);
+            self.rerun();
             %% clean
+            self.ur.file_init = self.file_savedt;
             self.ur.file_save = [];
         end
     end
