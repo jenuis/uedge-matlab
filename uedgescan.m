@@ -2,7 +2,7 @@
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-12-16
 % Version: 0.1.19
-% TODO: time out control
+
 classdef uedgescan < handle   
     properties(Constant)
         scan_field_value = 'value';
@@ -277,9 +277,19 @@ classdef uedgescan < handle
                 job.elapsed_time = toc;
                 disp([disp_prefix 'Total time used: ' num2str(job.elapsed_time/60) ' minutes!'])
             end
-            %% analyze job            
-            reason = lower(job.reason);
+            %% analyze job
+            % move fail savedt file to fail_dir
+            fail_types = {'max-iter', 'min-dt', 'max-time', 'ftol-fail'};
+            for i=1:length(fail_types)
+                file_fail_name = uedgerun.generate_file_name(job.input_diff, 'Suffix', fail_types{i});
+                file_fail = fullfile(work_dir, file_fail_name);
+                if exist(file_fail, 'file') ~= 2
+                    continue
+                end
+                movefile(file_fail, fail_dir)
+            end
             % killed by "kill -9"
+            reason = lower(job.reason);
             if contains(reason, 'kill')
                 disp([disp_prefix 'Job KILLED at "' ur.input_diff_gen_str(ur.input_diff) '"'])
                 return
@@ -672,7 +682,11 @@ classdef uedgescan < handle
                 [~, job_file_name] = fileparts(job_file.name);
                 disp([uedgerun.print_prefix ' Task finished: "' job_file_name '.mat"! ' num2str(self.task_remain(self.tasks)) ' tasks left ...'])
                 if ~isempty(self.tasks(i).Error)
-                    warning([uedgerun.print_prefix 'This task returned error: ' self.tasks(i).Error.message])
+                    fprintf(2, [uedgerun.print_prefix ' This task returned error!\n'])
+                    fprintf(2, [uedgerun.print_prefix '   Error mesg: "' self.tasks(i).Error.message '"\n'])
+                    fprintf(2, [uedgerun.print_prefix '   Error file: "' self.tasks(i).Error.stack(1).file '"\n'])
+                    fprintf(2, [uedgerun.print_prefix '   Error func: "' self.tasks(i).Error.stack(1).name '"\n'])
+                    fprintf(2, [uedgerun.print_prefix '   Error line: "' num2str(self.tasks(i).Error.stack(1).line) '"\n'])
                 end
                 fid = self.log_fid_list(i);
                 if fid > 2
