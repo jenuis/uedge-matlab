@@ -151,6 +151,41 @@ classdef uedgedata < handle
             xlabel('R [m]')
             ylabel('Z [m]')
         end
+        
+        function compare_experiment_profiles(self, rrsep_exp, ne_exp, te_exp, ti_exp, d, chie, chii)
+            subplot(1, 3, 1)
+            yyaxis right
+            plot(d.r*1e3, d.value, 'linewidth', 2)
+            hold on
+            yyaxis left
+            plot(rrsep_exp*1e3, ne_exp, 'linewidth', 2)
+            self.plot_1d_profile('nis(1)', 'omp', 'xaxisunit', 'mm');
+            xlabel('R-R_{sep}')
+            ylabel([])
+            legend('n_{e,exp}', 'n_{e,UEDGE}', 'D')
+
+            subplot(1, 3, 2)
+            yyaxis right
+            plot(chie.r*1e3, chie.value, 'linewidth', 2)
+            yyaxis left
+            hold on
+            plot(rrsep_exp*1e3, te_exp, 'linewidth', 2)
+            self.plot_1d_profile('tes', 'omp', 'xaxisunit', 'mm');
+            xlabel('R-R_{sep}')
+            ylabel([])
+            legend('T_{e,exp}', 'T_{e,UEDGE}', '\chi_e')
+
+            subplot(1, 3, 3)
+            yyaxis right
+            plot(chii.r*1e3, chii.value, 'linewidth', 2)
+            yyaxis left
+            hold on
+            plot(rrsep_exp*1e3, ti_exp, 'linewidth', 2)
+            self.plot_1d_profile('tis', 'omp', 'xaxisunit', 'mm');
+            xlabel('R-R_{sep}')
+            ylabel([])
+            legend( 'T_{i,exp}', 'T_{i,UEDGE}', '\chi_i')
+        end
     end
     
     methods
@@ -904,9 +939,9 @@ classdef uedgedata < handle
             %% 1D OMP
             subplot(row_no, col_no, sub_no)
             yyaxis left
-            self.plot_1d_profile('nis(1)', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            self.plot_1d_profile('nis(1)', 'omp', 'RemoveGhost', Args.RemoveGhost);
             yyaxis right
-            self.plot_1d_profile('ngs', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            self.plot_1d_profile('ngs', 'omp', 'RemoveGhost', Args.RemoveGhost);
             try
                 textbp(self.file_savedt, 'interpreter', 'none')
             catch
@@ -914,22 +949,25 @@ classdef uedgedata < handle
             
             sub_no = sub_no + 1;
             subplot(row_no, col_no, sub_no)
-            self.plot_1d_profile('tes', 'omp', 'RemoveGhost', Args.RemoveGhost)
-            self.plot_1d_profile('tis', 'omp', 'RemoveGhost', Args.RemoveGhost)
+            self.plot_1d_profile('tes', 'omp', 'RemoveGhost', Args.RemoveGhost);
+            self.plot_1d_profile('tis', 'omp', 'RemoveGhost', Args.RemoveGhost);
             ylabel('T_{omp} [eV]')
             legend('T_e', 'T_i')            
             %% 1D target
             sub_no = sub_no + 1;
             subplot(row_no, col_no, sub_no)
             yyaxis left
-            self.plot_1d_profile('nis(1)', Args.Target, 'RemoveGhost', Args.RemoveGhost)
+            self.plot_1d_profile('nis(1)', Args.Target, 'RemoveGhost', Args.RemoveGhost);
             yyaxis right
-            self.plot_1d_profile('ngs', Args.Target, 'RemoveGhost', Args.RemoveGhost)
+            self.plot_1d_profile('ngs', Args.Target, 'RemoveGhost', Args.RemoveGhost);
             
             sub_no = sub_no + 1;
             subplot(row_no, col_no, sub_no)
-            self.plot_1d_profile('tis', Args.Target, 'RemoveGhost', Args.RemoveGhost)
-            plot(0, Args.DetachTemperature*1.01, 'w')
+            self.plot_1d_profile('tes', Args.Target, 'RemoveGhost', Args.RemoveGhost);
+            self.plot_1d_profile('tis', Args.Target, 'RemoveGhost', Args.RemoveGhost);
+            ylabel(['T_{' upper(Args.Target) '} [eV]'])
+            legend('T_e', 'T_i')
+%             plot(0, Args.DetachTemperature*1.01, 'w')
             l = getlines(); l = l(1);
             if all(l.YData <= Args.DetachTemperature)
                 textbp('Detached', 'fontsize', 25, 'color', 'r')
@@ -957,7 +995,10 @@ classdef uedgedata < handle
             self.plot_2d('tes');
         end
         
-        function status = rerun(self)
+        function status = rerun(self, varargin)
+            %% check argument
+            Args.FileSavedt = self.file_savedt;
+            Args = parseArgs(varargin, Args);
             %% check init file
             file_init_max_time = strrep(self.file_savedt, uedgerun.file_extension, ['_max-iter' uedgerun.file_extension]);
             if exist(file_init_max_time, 'file') == 2
@@ -965,7 +1006,7 @@ classdef uedgedata < handle
                 self.ur.file_init = file_init_max_time;
             end
             %% gen script
-            self.ur.file_save = self.file_savedt;
+            self.ur.file_save = Args.FileSavedt;
             self.ur.script_run_gen();
             %% run
             status = self.ur.run();
@@ -973,7 +1014,7 @@ classdef uedgedata < handle
             self.ur.file_init = self.file_savedt;
             self.ur.file_save = [];
             %% set self.file_image and rename image file
-            if status ~= 0
+            if status ~= 0 || exist(self.ur.script_image, 'file') ~= 2
                 return
             end
             % image file named according to savedt file
@@ -1014,6 +1055,80 @@ classdef uedgedata < handle
             %% clean
             self.ur.file_init = self.file_savedt;
             self.ur.file_save = [];
+        end
+        
+        function tune_transport_coeff(self, varargin)
+            %% check arguments
+            Args.ExperimentProfile = '';
+            Args.TransportCoeff = [];
+            Args.TransportCoeffSavePath = 'transp_coeffs.mat';
+            Args.OverWrite = false;
+            Args = parseArgs(varargin, Args, {'OverWrite'});
+            
+            experiment_file = Args.ExperimentProfile;
+            transp_coeff = Args.TransportCoeff;
+            
+            assert(~isempty(transp_coeff), '"TransportCoeff" is empty!')
+            assert(isstruct(transp_coeff), '"TransportCoeff" should be a struct!')
+            
+            field_names = {'d', 'chie', 'chii'};
+            for i=1:length(field_names)
+                n = field_names{i};
+                assert(fieldexist(transp_coeff, n), ['"TransportCoeff" has no attribute: "' n '"!'])
+                v = transp_coeff.(n);
+                assert(fieldexist(v, 'r'), ['"TransportCoeff" has no attribute: "' n '.r"!'])
+                assert(fieldexist(v, 'value'), ['"TransportCoeff" has no attribute: "' n '.value"!'])
+                assert(length(v.r) == length(v.value), ['"' n '.r" has different length from "' n '.value"!'])
+            end
+            %% load experiment profiles
+            rrsep_exp = NaN;
+            ne_exp = NaN;
+            te_exp = NaN;
+            ti_exp = NaN;
+            if ~isempty(experiment_file) && exist(experiment_file, 'file') == 2
+                rrsep_exp = matread(experiment_file, 'r', true);
+                assert(sum(rrsep_exp > 0) > 1 && sum(rrsep_exp < 0) > 1, '"r" should be "R - Rsep"!')
+                ne_exp = matread(experiment_file, 'n', true);
+                te_exp = matread(experiment_file, 'te', true);
+                ti_exp = matread(experiment_file, 'ti', true);
+            end
+            %% collect variables
+            gridr  = self.cal_rrsep('omp');
+            d      = transp_coeff.d;
+            chie   = transp_coeff.chie;
+            chii   = transp_coeff.chii;
+            %% plot modified transport coefficients
+            fh = figure;
+            self.compare_experiment_profiles(rrsep_exp, ne_exp, te_exp, ti_exp, d, chie, chii);
+            setfigposition;
+            [~,~,b]=ginput(2);
+            assert(sum(b) == 2, 'User Quit!')
+            close(fh)
+            %% save transport coefficients
+            save(Args.TransportCoeffSavePath, 'gridr', '-v7')
+            mf = matfile(Args.TransportCoeffSavePath, 'writable', true);
+            mf.d = d;
+            mf.chie = chie;
+            mf.chii = chii;
+            %% modify input file
+            uedgerun.input_exist_parameter(self.ur.script_input, 'transp_coeff_path', true);
+            contents = uedgerun.input_modify(self.ur.script_input, 'transp_coeff_path', ['"' fullfile(pwd, Args.TransportCoeffSavePath) '"']);
+            uedgerun.script_save(self.ur.script_input, contents);
+            %% run
+            file_savedt_new = strrep(self.file_savedt, uedgerun.file_extension, ['_new' uedgerun.file_extension]);
+            status = self.rerun('FileSavedt', file_savedt_new);
+            assert(status == 0, 'Failed to converge for the input "TransportCoeff"!')
+            %% plot
+            ud = uedgedata(file_savedt_new);
+            figure;
+            setfigposition;
+            ud.compare_experiment_profiles(rrsep_exp, ne_exp, te_exp, ti_exp, d, chie, chii);
+            ud.view();
+            %% overwrite?
+            if Args.OverWrite
+                movefile(ud.file_savedt, self.file_savedt);
+                movefile(ud.file_image, self.file_image);
+            end
         end
     end
 end
