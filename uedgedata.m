@@ -1,7 +1,7 @@
 % Author: Xiang LIU@ASIPP
 % E-mail: xliu@ipp.ac.cn
 % Created: 2023-10-11
-% Version: V 0.1.9
+% Version: V 0.1.10
 classdef uedgedata < handle
     properties(Access=private)
         depdencies = {...
@@ -153,38 +153,57 @@ classdef uedgedata < handle
         end
         
         function compare_experiment_profiles(self, rrsep_exp, ne_exp, te_exp, ti_exp, d, chie, chii)
+            %% check argument
+            if nargin < 6
+                d = [];
+                chie = [];
+                chii = [];
+            end
+            %% plot density
+            legend_str = {'n_{e,exp}', 'n_{e,UEDGE}'};
             subplot(1, 3, 1)
-            yyaxis right
-            plot(d.r*1e3, d.value, 'linewidth', 2)
             hold on
-            yyaxis left
+            if ~isempty(d)
+                yyaxis right
+                plot(d.r*1e3, d.value, 'linewidth', 2)
+                legend_str{end+1} = 'D';
+                yyaxis left
+            end
             plot(rrsep_exp*1e3, ne_exp, 'linewidth', 2)
             self.plot_1d_profile('nis(1)', 'omp', 'xaxisunit', 'mm');
             xlabel('R-R_{sep}')
             ylabel([])
-            legend('n_{e,exp}', 'n_{e,UEDGE}', 'D')
-
+            legend(legend_str)
+            %% plot Te
+            legend_str = {'T_{e,exp}', 'T_{e,UEDGE}'};
             subplot(1, 3, 2)
-            yyaxis right
-            plot(chie.r*1e3, chie.value, 'linewidth', 2)
-            yyaxis left
             hold on
+            if ~isempty(chie)
+                yyaxis right
+                plot(chie.r*1e3, chie.value, 'linewidth', 2)
+                legend_str{end+1} = '\chi_e';
+                yyaxis left
+            end
             plot(rrsep_exp*1e3, te_exp, 'linewidth', 2)
             self.plot_1d_profile('tes', 'omp', 'xaxisunit', 'mm');
             xlabel('R-R_{sep}')
             ylabel([])
-            legend('T_{e,exp}', 'T_{e,UEDGE}', '\chi_e')
-
+            legend(legend_str)
+            %% plot Ti
+            legend_str = {'T_{i,exp}', 'T_{i,UEDGE}'};
             subplot(1, 3, 3)
-            yyaxis right
-            plot(chii.r*1e3, chii.value, 'linewidth', 2)
-            yyaxis left
             hold on
+            if ~isempty(chii)
+                yyaxis right
+                plot(chii.r*1e3, chii.value, 'linewidth', 2)
+                legend_str{end+1} = '\chi_i';
+                yyaxis left
+            end
             plot(rrsep_exp*1e3, ti_exp, 'linewidth', 2)
             self.plot_1d_profile('tis', 'omp', 'xaxisunit', 'mm');
             xlabel('R-R_{sep}')
             ylabel([])
-            legend( 'T_{i,exp}', 'T_{i,UEDGE}', '\chi_i')
+            legend(legend_str)
         end
     end
     
@@ -279,7 +298,7 @@ classdef uedgedata < handle
             self.ur.script_save(self.ur.script_image, contents);
             %% run
             self.ur.file_save = self.file_savedt;
-            self.ur.script_run_gen();
+            self.ur.script_run_gen('CheckInputDiffLeft', 'Dt', 1e-9);
             self.ur.run();
             %% clean
             delete(self.ur.script_image);
@@ -645,7 +664,7 @@ classdef uedgedata < handle
             end
             
             [flag, ind] = haselement(lower(variables), phy_name);
-            assert(flag, '"phy_name" is none of a savedt and image variables!');
+            assert(flag, ['"' phy_name '" is none of a savedt and image variables!']);
             phy_name = variables{ind};
             phy = self.image_read_physical(phy_name);
             
@@ -672,6 +691,16 @@ classdef uedgedata < handle
             plot(r, z, 'r', 'linewidth', 1.5)
         end
         
+        function plot_wall(self)
+            file_wall = self.ur.check_existence({'wall_position.mat', '../wall_position.mat'}, true);
+            wall_r = matread(file_wall, 'wall_r');
+            wall_z = matread(file_wall, 'wall_z');
+            plot(wall_r, wall_z, 'b-', 'linewidth', 2.5)
+            axis equal
+            xlim([min(wall_r) max(wall_r)])
+            ylim([min(wall_z) max(wall_z)])
+        end
+        
         function fig = plot_mesh(self, varargin)
             Args.LineColor = 'k';
             Args.PlotBdry = 1;
@@ -696,6 +725,11 @@ classdef uedgedata < handle
             
             self.patch_decoration();
             self.figure_decoration();
+            
+            try
+                self.plot_wall()
+            catch
+            end
         end
         
         function val = serialize(self, val)
@@ -980,11 +1014,19 @@ classdef uedgedata < handle
             
             sub_no = sub_no + 1;
             subplot(row_no, col_no, sub_no)
-            self.cal_lambda(['j' tag], 'RemoveGhost', Args.RemoveGhost);
+            try
+                self.cal_lambda(['j' tag], 'RemoveGhost', Args.RemoveGhost);
+            catch ME
+                textbp(ME.message, 'color', 'r')
+            end
             
             sub_no = sub_no + 1;
             subplot(row_no, col_no, sub_no)
-            self.cal_lambda(['qt' tag], 'RemoveGhost', Args.RemoveGhost);
+            try
+                self.cal_lambda(['qt' tag], 'RemoveGhost', Args.RemoveGhost);
+            catch ME
+                textbp(ME.message, 'color', 'r')
+            end
             %% 2D
             sub_no = sub_no + 1;
             subplot(row_no, col_no, sub_no)
@@ -995,6 +1037,23 @@ classdef uedgedata < handle
             self.plot_2d('tes');
         end
         
+        function fig = plot_experiment(self, experiment_file)
+            %% check argument
+            if nargin < 2
+                experiment_file = 'experiment_profiles.mat';
+            end
+            %% load data
+            rrsep_exp = matread(experiment_file, 'r', true);
+            ne_exp = matread(experiment_file, 'n', true);
+            te_exp = matread(experiment_file, 'te', true);
+            ti_exp = matread(experiment_file, 'ti', true);
+            %% plot
+            fig = figure;
+            self.compare_experiment_profiles(rrsep_exp, ne_exp, te_exp, ti_exp);
+            self.figure_decoration;
+            setfigposition;
+        end
+                
         function status = rerun(self, varargin)
             %% check argument
             Args.FileSavedt = self.file_savedt;
@@ -1007,7 +1066,7 @@ classdef uedgedata < handle
             end
             %% gen script
             self.ur.file_save = Args.FileSavedt;
-            self.ur.script_run_gen();
+            self.ur.script_run_gen('CheckInputDiffLeft', 'Dt', 1e-9);
             %% run
             status = self.ur.run();
             %% clean

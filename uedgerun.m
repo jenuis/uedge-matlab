@@ -198,7 +198,7 @@ classdef uedgerun < handle
             line = strip(line{1});
         end
         
-        function contents = input_modify(input_script, varargin)
+        function [contents, args_left] = input_modify(input_script, varargin)
             %% check arguments
             input_script = uedgerun.check_existence(input_script, 1);
             vararg_len = length(varargin);
@@ -391,9 +391,8 @@ classdef uedgerun < handle
                 f_nece = file_necessaries{i};
                 if exist(f_nece{1}, 'file') == 2
                     continue
-                else
-                    self.input_exist_parameter(self.script_input, f_nece{2}, true);
                 end
+                self.input_exist_parameter(self.script_input, f_nece{2}, true);
             end
         end
         
@@ -461,7 +460,7 @@ classdef uedgerun < handle
             end
         end
         
-        function file_input_new = script_input_gen(self, varargin)
+        function [file_input_new, args_left] = script_input_gen(self, varargin)
             %% file_input_new = script_input_gen(self, varargin)
             
             %% check argument
@@ -477,7 +476,7 @@ classdef uedgerun < handle
             %% concatenate varargin
             args = [args(:); varargin(:)];
             %% write to file
-            contents = self.input_modify(self.script_input, args{:});
+            [contents, args_left] = self.input_modify(self.script_input, args{:});
             self.script_save(file_input_new, contents);
             self.script_input_diff = file_input_new;
         end
@@ -487,7 +486,8 @@ classdef uedgerun < handle
             Args.ID = [];
             Args.BCIncludeDt = false; % set bbb.isbcwdt
             Args.Dt = []; % set bbb.dtreal
-            Args = parseArgs(varargin, Args, {'BCIncludeDt'});
+            Args.CheckInputDiffLeft = false;
+            Args = parseArgs(varargin, Args, {'BCIncludeDt', 'CheckInputDiffLeft'});
             
             if isempty(Args.ID)
                 disp_prefix = [uedgerun.print_prefix ' '];
@@ -508,7 +508,8 @@ classdef uedgerun < handle
                 args{end+1} = 'bbb.dtreal';
                 args{end+1} = num2str(Args.Dt);
             end
-            rd_in_script = self.script_input_gen(args{:});
+            [rd_in_script, args_left] = self.script_input_gen(args{:});
+            assert(~Args.CheckInputDiffLeft || isempty(args_left), ['The following input(s) was not modified: "' strjoin(args_left, ', ') '"!'])
             image_script = self.script_image;
             %% modify print prefix in input script
             contents = {};
