@@ -40,9 +40,12 @@ classdef uedgedata < handle
         rbdry
         zbdry
         zmid
+        yyc
+        yyf
         yylb
         yyrb
         psinormc
+        psinormf
     end
     
     methods(Static)
@@ -263,7 +266,7 @@ classdef uedgedata < handle
                 return
             end
             %% load
-            var_list = {'geometry', 'rbdry', 'zbdry', 'yylb', 'yyrb', 'zmid', 'psinormc'};
+            var_list = {'geometry', 'rbdry', 'zbdry', 'yyc', 'yyf', 'yylb', 'yyrb', 'zmid', 'psinormc', 'psinormf'};
             file_savedt_store = self.file_savedt;
             self.file_savedt = mesh_file;
             for i=1:length(var_list)
@@ -287,10 +290,13 @@ classdef uedgedata < handle
                 '"com.geometry",', ...
                 '"com.rbdry", # radial coordinates of last closed flux surface from EFIT', ...
                 '"com.zbdry", # vertical coordinates of last closed flux surface from EFIT', ...
+                '"com.yyc", # midplane y-coordinate at cell center', ...
+                '"com.yyf", # midplane y-coordinate at cell face (edge)', ...
                 '"com.yylb", #radial dist. on left boundary from septrx.', ...
                 '"com.yyrb", #radial dist. on right boundary from septrx.', ...
                 '"com.zmid", # vertical height of midplane above bottom of EFIT mesh', ...
-                '"com.psinormc", # norm spi ', ...
+                '"com.psinormc", # norm spi at cell center', ...
+                '"com.psinormf", # norm spi at cell face (edge)', ...
                 ']', ...
                 '', ...
                 ['hdf5_save("' self.file_mesh '", var_list)']};
@@ -304,6 +310,9 @@ classdef uedgedata < handle
             delete(self.ur.script_image);
             self.ur.script_image = script_image_old;
             self.ur.file_save = [];
+            %% load mesh
+            self.mesh_load();
+            self.find_lcfs_index();
         end
 
         function flag = image_check(self)
@@ -777,33 +786,54 @@ classdef uedgedata < handle
         end
         
         function [r_lcfs, label] = cal_rrsep(self, poloidal_location, varargin)
+            %% check argument
             Args.XaxisUnit = 'm';
             Args.RemoveGhost = false;
             Args = parseArgs(varargin, Args, {'RemoveGhost'});
             assert(haselement({'m', 'mm'}, Args.XaxisUnit), '"Args.XaxisUnit" should be in {"m", "mm"}')
+            poloidal_location = lower(poloidal_location);
+            %% yyrb
+            flag_obtained = false;
+            if haselement({'lo', 'rb'}, poloidal_location)
+                r_lcfs = self.yyrb;
+                flag_obtained = true;
+            end
+            %% yylb
+            if haselement({'li', 'lb'}, poloidal_location)
+                r_lcfs = self.yylb;
+                flag_obtained = true;
+            end
+            %% omp
+            if haselement({'omp', 'mp'}, poloidal_location)
+                r_lcfs = self.yyf;
+                flag_obtained = true;
+            end
+            %% calculate
+            if ~flag_obtained
+                %TODO: use correct one, test against yylb and yyrb
+                indices = self.get_radial_indices(poloidal_location);
             
-            indices = self.get_radial_indices(poloidal_location);
+                x = self.X(:, indices);
+                y = self.Y(:, indices);
             
-            x = self.X(:, indices);
-            y = self.Y(:, indices);
+                x = mean(x);
+                y = mean(y);
             
-            x = mean(x);
-            y = mean(y);
-            %TODO: use correct one, test against yylb and yyrb
-            
-            [~, seg_len] = arclength(x([1 1:end]), y([1 1:end]));
-            r_lcfs = cumsum(seg_len);
-            assert(~isempty(self.lcfs_radial_ind), '"lcfs_radial_ind" is empty!')
-            r_lcfs = r_lcfs - r_lcfs(self.lcfs_radial_ind);
-            
+                [~, seg_len] = arclength(x([1 1:end]), y([1 1:end]));
+                r_lcfs = cumsum(seg_len);
+                assert(~isempty(self.lcfs_radial_ind), '"lcfs_radial_ind" is empty!')
+                r_lcfs = r_lcfs - r_lcfs(self.lcfs_radial_ind);
+                warning('For non-orthogonal grid, the calculation might be wrong!')
+            end
+            %% check unit
             if strcmpi(Args.XaxisUnit, 'mm')
                 r_lcfs = r_lcfs * 1e3;
             end
-            
+            %% remove ghost
             if Args.RemoveGhost
                 r_lcfs = r_lcfs(self.bdry_ind_radial_start:self.bdry_ind_radial_end);
             end
-            
+            %% gen label
             poloidal_location = num2str(poloidal_location, '%i');
             label = ['R-R_{LCFS,' upper(poloidal_location) '} [' Args.XaxisUnit ']'];
         end
@@ -1111,6 +1141,23 @@ classdef uedgedata < handle
             self.ur.rundt_max_time = max_time_org;
             self.ur.file_init = strrep(file_retry, uedgerun.file_extension, ['_max-time' uedgerun.file_extension]);
             self.rerun();
+            %% clean
+            self.ur.file_init = self.file_savedt;
+            self.ur.file_save = [];
+        end
+        
+        function status = resize(self, resize_script)
+            %% check argument
+            if nargin < 2
+                resize_script = 'resize.py';
+            end
+            assert(exist(resize_script, 'file') == 2, ['"' resize_script '" not exist!'])
+            %% prepare
+            self.ur.file_save = strrep(self.file_savedt, uedgerun.file_extension, ['_resized' uedgerun.file_extension]);
+            self.ur.script_run_gen('CheckInputDiffLeft', 'Dt', 1e-9);
+            self.ur.script_resize = resize_script;
+            %% run
+            status = self.ur.run();
             %% clean
             self.ur.file_init = self.file_savedt;
             self.ur.file_save = [];
