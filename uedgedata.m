@@ -1153,9 +1153,9 @@ classdef uedgedata < handle
             end
             assert(exist(resize_script, 'file') == 2, ['"' resize_script '" not exist!'])
             %% prepare
+            self.ur.script_resize = resize_script;
             self.ur.file_save = strrep(self.file_savedt, uedgerun.file_extension, ['_resized' uedgerun.file_extension]);
             self.ur.script_run_gen('CheckInputDiffLeft', 'Dt', 1e-9);
-            self.ur.script_resize = resize_script;
             %% run
             status = self.ur.run();
             %% clean

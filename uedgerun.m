@@ -560,6 +560,7 @@ classdef uedgerun < handle
                 contents{end+1} = ['resize_script = "' resize_script '"'];
                 contents{end+1} = ['rundt(savefname="' profile_tmp '")'];
                 contents{end+1} = 'bbb.icntnunk = 0';
+                contents{end+1} = ['print("' disp_prefix 'Exec: " + resize_script)'];
                 contents{end+1} = 'exec(open(resize_script).read())';
                 contents{end+1} = 'bbb.exmain()';
                 contents{end+1} = '';
