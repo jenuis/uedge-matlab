@@ -540,6 +540,18 @@ classdef uedgedata < handle
             end
         end
         
+        function savedt_delete(self, var_uri, savedt_file)
+            %% check argument
+            if nargin < 3
+                savedt_file = self.file_savedt;
+            end
+            %% open file
+            var_uri = self.check_uri(var_uri);
+            fid = H5F.open(savedt_file, 'H5F_ACC_RDWR', 'H5P_DEFAULT');
+            %% delete data
+            H5L.delete(fid, var_uri, 'H5P_DEFAULT');
+        end
+        
         function phy = savedt_read_physical(self, phy_name, varargin)
             ind = regexp(phy_name, '\(\d+\)', 'once');
             if ~isempty(ind)
@@ -1234,6 +1246,42 @@ classdef uedgedata < handle
             if Args.OverWrite
                 movefile(ud.file_savedt, self.file_savedt);
                 movefile(ud.file_image, self.file_image);
+            end
+        end
+        
+        function nhsp_regulate(self, savedt_file_source)
+            %% get nhsp
+            nis_size = self.savedt_size('nis');
+            nhsp = nis_size(end);
+            %% nhsp = 2 --> nhsp = 1
+            var_names = {'/bbb/nis', '/bbb/ups'};
+            if nargin < 2 && nhsp == 2
+                savedt_file_new = strrep(self.file_savedt, uedgerun.file_extension, ['_nhsp1' uedgerun.file_extension]);
+                copyfile(self.file_savedt, savedt_file_new)
+                for i=1:length(var_names)
+                    data = self.savedt_read(var_names{i});
+                    data_size = nis_size;
+                    data_size(end) = 1;
+                    self.savedt_delete(var_names{i}, savedt_file_new);
+                    h5create(savedt_file_new, var_names{i}, flip(data_size))
+                    h5write(savedt_file_new, var_names{i}, permute(data(:,:,1), [3 2 1]))
+                    h5writeatt(savedt_file_new, var_names{i}, 'units', '')
+                end
+                return
+            end
+            %% nhsp = 1 --> nhsp = 2
+            ud_source = uedgedata(savedt_file_source);
+            nis_size = ud_source.savedt_size('nis');
+            assert(nis_size(end) > 1, 'Input nhsp in savedt file is 1!')
+            savedt_file_new = strrep(self.file_savedt, uedgerun.file_extension, ['_nhsp2' uedgerun.file_extension]);
+            copyfile(self.file_savedt, savedt_file_new)
+            for i=1:length(var_names)
+                data = ud_source.savedt_read(var_names{i});
+                data(:,:,1) = self.savedt_read(var_names{i});
+                self.savedt_delete(var_names{i}, savedt_file_new);
+                h5create(savedt_file_new, var_names{i}, flip(nis_size))
+                h5write(savedt_file_new, var_names{i}, permute(data, [3 2 1]))
+                h5writeatt(savedt_file_new, var_names{i}, 'units', '')
             end
         end
     end
